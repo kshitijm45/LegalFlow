@@ -11,7 +11,6 @@ import {
   Shield,
   CreditCard,
   LogOut,
-  Scale,
 } from 'lucide-react'
 import { cn, getInitials } from '@/lib/utils'
 import { useAuth } from '@/hooks/useAuth'
@@ -77,14 +76,26 @@ export function Sidebar() {
 
   return (
     <aside className="w-[224px] flex-shrink-0 h-full flex flex-col bg-white border-r border-border">
-      {/* Logo */}
-      <div className="px-5 py-5 border-b border-border">
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 bg-indigo rounded-[7px] flex items-center justify-center">
-            <Scale size={14} className="text-white" />
-          </div>
-          <span className="font-semibold text-text text-[15px] tracking-tight">LegalFlow</span>
-        </div>
+      {/* Logo — drop your logo file at frontend/public/logo.svg (or .png) */}
+      <div className="px-5 py-[18px] border-b border-border">
+        <img
+          src="/logo.png"
+          alt="Carta"
+          className="h-8 w-auto"
+          onError={(e) => {
+            // Fallback to text if image not found
+            const target = e.currentTarget
+            target.style.display = 'none'
+            const fallback = target.nextElementSibling as HTMLElement | null
+            if (fallback) fallback.style.display = 'block'
+          }}
+        />
+        <span
+          className="font-semibold text-text text-[15px] tracking-tight hidden"
+          aria-hidden="true"
+        >
+          Carta
+        </span>
       </div>
 
       {/* Navigation */}
@@ -101,7 +112,7 @@ export function Sidebar() {
         </div>
         <SidebarNavItem to="/app/market-analysis" icon="BarChart2" label="Market Analysis" />
         <SidebarNavItem to="/app/clause-audit" icon="ClipboardCheck" label="Clause Audit" />
-        <SidebarNavItem to="/app/obligations" icon="Bell" label="Obligations" badge={3} />
+        <SidebarNavItem to="/app/obligations" icon="Bell" label="Obligations" />
         <SidebarNavItem to="/app/timeline" icon="GitCommitHorizontal" label="Timeline" />
         <SidebarNavItem to="/app/workflow-builder" icon="Workflow" label="Workflow Builder" />
 
@@ -113,8 +124,8 @@ export function Sidebar() {
               </p>
             </div>
             <SidebarNavItem to="/app/settings/users" icon="Users" label="User Management" />
-            <SidebarNavItem to="/app/settings/security" icon="Shield" label="Security & SSO" />
-            <SidebarNavItem to="/app/settings/billing" icon="CreditCard" label="Billing & Plan" />
+            {/* <SidebarNavItem to="/app/settings/security" icon="Shield" label="Security & SSO" />
+            <SidebarNavItem to="/app/settings/billing" icon="CreditCard" label="Billing & Plan" /> */}
           </>
       </nav>
 

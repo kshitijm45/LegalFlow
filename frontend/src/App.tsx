@@ -1,5 +1,29 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { useClerk } from '@clerk/react'
+import { useEffect } from 'react'
+
+function SSOCallback() {
+  const { handleRedirectCallback } = useClerk()
+  const navigate = useNavigate()
+
+  useEffect(() => {
+    handleRedirectCallback({
+      signInForceRedirectUrl: '/app/dashboard',
+      signUpForceRedirectUrl: '/app/dashboard',
+      signInUrl: '/login',
+      signUpUrl: '/signup',
+      continueSignUpUrl: '/signup',
+      transferable: true,
+    }).catch(() => navigate('/login', { replace: true }))
+  }, [])
+
+  return (
+    <div className="h-full flex items-center justify-center bg-white">
+      <div className="w-5 h-5 border-2 border-indigo border-t-transparent rounded-full animate-spin" />
+    </div>
+  )
+}
 
 import { AppLayout } from '@/components/layout/AppLayout'
 import { LandingPage } from '@/pages/landing/LandingPage'
@@ -33,6 +57,9 @@ export default function App() {
           <Route path="/login" element={<LoginPage />} />
           <Route path="/signup" element={<SignupPage />} />
 
+          {/* OAuth SSO callback — Clerk handles the redirect exchange here */}
+          <Route path="/sso-callback" element={<SSOCallback />} />
+
           {/* Protected app */}
           <Route path="/app" element={<AppLayout />}>
             <Route index element={<Navigate to="/app/dashboard" replace />} />
@@ -44,7 +71,6 @@ export default function App() {
             <Route path="timeline" element={<TimelinePage />} />
             <Route path="workflow-builder" element={<WorkflowBuilderPage />} />
             <Route path="settings/users" element={<UserManagementPage />} />
-            {/* Placeholder routes */}
             <Route path="settings/security" element={<Navigate to="/app/settings/users" replace />} />
             <Route path="settings/billing" element={<Navigate to="/app/settings/users" replace />} />
           </Route>

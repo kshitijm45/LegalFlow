@@ -138,7 +138,7 @@ const testimonials = [
     name: 'Priya Iyer',
     role: 'Partner',
     firm: 'Mehta & Iyer LLP',
-    quote: 'LegalFlow cut our contract review time by 70%. The clause benchmarking alone saved us from three unfavourable deals last quarter.',
+    quote: 'Carta cut our contract review time by 70%. The clause benchmarking alone saved us from three unfavourable deals last quarter.',
     initials: 'PI',
     color: '#4338CA',
   },
@@ -178,7 +178,7 @@ export function LandingPage() {
             <div className="w-7 h-7 bg-indigo rounded-[7px] flex items-center justify-center">
               <Scale size={14} className="text-white" />
             </div>
-            <span className="font-semibold text-text text-[15px] tracking-tight">LegalFlow</span>
+            <span className="font-semibold text-text text-[15px] tracking-tight">Carta</span>
           </div>
           <nav className="hidden md:flex items-center gap-6 text-sm text-text-2">
             <a href="#features" className="hover:text-text transition-colors">Features</a>
@@ -264,7 +264,7 @@ export function LandingPage() {
               <div className="w-3 h-3 rounded-full bg-danger/50" />
               <div className="w-3 h-3 rounded-full bg-warning/50" />
               <div className="w-3 h-3 rounded-full bg-success/50" />
-              <span className="text-xs text-text-3 ml-3 font-mono">LegalFlow — Dashboard</span>
+              <span className="text-xs text-text-3 ml-3 font-mono">Carta — Dashboard</span>
             </div>
 
             {/* Mockup content */}
@@ -477,7 +477,7 @@ export function LandingPage() {
             <em>in action?</em>
           </h2>
           <p className="text-indigo-mid mb-10 text-lg">
-            Join 120+ firms already using LegalFlow to review contracts 10× faster.
+            Join 120+ firms already using Carta to review contracts 10× faster.
           </p>
           <div className="flex items-center justify-center gap-4">
             <Link
@@ -504,9 +504,9 @@ export function LandingPage() {
             <div className="w-6 h-6 bg-indigo rounded-[6px] flex items-center justify-center">
               <Scale size={12} className="text-white" />
             </div>
-            <span className="text-sm font-semibold text-text">LegalFlow</span>
+            <span className="text-sm font-semibold text-text">Carta</span>
           </div>
-          <p className="text-xs text-text-3">© 2024 LegalFlow · Privacy · Terms</p>
+          <p className="text-xs text-text-3">© 2024 Carta · Privacy · Terms</p>
         </div>
       </footer>
     </div>

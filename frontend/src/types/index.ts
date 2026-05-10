@@ -131,7 +131,7 @@ export interface Workflow {
   id: string
   name: string
   description: string
-  lastRun: string
+  lastRun: string | null
   status: 'active' | 'draft' | 'paused'
   nodes: WorkflowNode[]
   edges: WorkflowEdge[]
@@ -144,6 +144,7 @@ export interface WorkflowNode {
   data: {
     label: string
     description: string
+    [key: string]: unknown
   }
 }
 

@@ -5,3 +5,18 @@ Tech_Stack.docx
 
 /design/
 /.claude/
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Office documents (personal/internal)
+*.docx
+*.xlsx
+*.pptx
+
+# Real contract files — never commit
+/contracts/
+
+# Local docs
+/docs/

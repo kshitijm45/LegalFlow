@@ -1,28 +1,75 @@
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, Navigate, useNavigate } from 'react-router-dom'
 import { Eye, EyeOff, Scale, Mail, Lock, ArrowRight, Shield } from 'lucide-react'
-import { useAuth } from '@/hooks/useAuth'
+import { useSignIn } from '@clerk/react'
+import { useUser } from '@clerk/react'
+
+function fieldErrorMessage(code: string, message: string, longMessage?: string): string {
+  if (code === 'form_identifier_not_found') return 'No account found with this email.'
+  if (code === 'form_password_incorrect') return 'Incorrect password.'
+  if (code === 'too_many_attempts') return 'Too many attempts. Please try again later.'
+  return longMessage ?? message ?? 'Sign in failed. Please try again.'
+}
 
 export function LoginPage() {
+  const { signIn, errors, fetchStatus } = useSignIn()
+  const { isLoaded, isSignedIn } = useUser()
+  const navigate = useNavigate()
+
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState(false)
-  const { login } = useAuth()
-  const navigate = useNavigate()
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  if (isLoaded && isSignedIn) return <Navigate to="/app/dashboard" replace />
+
+  const loading = fetchStatus === 'fetching'
+
+  // Derive error messages from Clerk's errors object after each attempt
+  const identifierError = errors.fields.identifier
+  const passwordError = errors.fields.password
+  const globalError = errors.global?.[0]
+
+  const displayError = errorMsg
+    ?? (identifierError ? fieldErrorMessage(identifierError.code, identifierError.message, identifierError.longMessage) : null)
+    ?? (passwordError ? fieldErrorMessage(passwordError.code, passwordError.message, passwordError.longMessage) : null)
+    ?? (globalError ? (globalError.longMessage ?? globalError.message) : null)
+
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    if (!email || !password) {
-      setError(true)
+    if (!isLoaded) return
+
+    setErrorMsg(null)
+
+    const { error: createError } = await signIn.create({ identifier: email })
+    if (createError) {
+      setErrorMsg(fieldErrorMessage(createError.code, createError.message, createError.longMessage))
       return
     }
-    setError(false)
-    setLoading(true)
-    await login(email, password)
-    setLoading(false)
+
+    const { error: passwordError } = await signIn.password({ password })
+    if (passwordError) {
+      setErrorMsg(fieldErrorMessage(passwordError.code, passwordError.message, passwordError.longMessage))
+      return
+    }
+
+    const { error: finalizeError } = await signIn.finalize()
+    if (finalizeError) {
+      setErrorMsg(finalizeError.longMessage ?? finalizeError.message ?? 'Sign in failed. Please try again.')
+      return
+    }
+
     navigate('/app/dashboard')
+  }
+
+  const handleSSO = async (strategy: 'oauth_microsoft' | 'oauth_google') => {
+    if (!isLoaded) return
+    const { error } = await signIn.sso({
+      strategy,
+      redirectUrl: `${window.location.origin}/sso-callback`,
+      redirectCallbackUrl: '/app/dashboard',
+    })
+    if (error) setErrorMsg(error.longMessage ?? error.message ?? 'Sign-in failed.')
   }
 
   return (
@@ -30,11 +77,8 @@ export function LoginPage() {
       {/* Left panel */}
       <div
         className="w-[480px] flex-shrink-0 relative flex flex-col justify-between p-12 overflow-hidden"
-        style={{
-          background: 'linear-gradient(160deg, #312E81 0%, #1e1b4b 100%)',
-        }}
+        style={{ background: 'linear-gradient(160deg, #312E81 0%, #1e1b4b 100%)' }}
       >
-        {/* Dot grid */}
         <div
           className="absolute inset-0 opacity-[0.08]"
           style={{
@@ -42,19 +86,18 @@ export function LoginPage() {
             backgroundSize: '28px 28px',
           }}
         />
-        {/* Glow */}
         <div
           className="absolute top-0 right-0 w-80 h-80 opacity-20 rounded-full"
           style={{ background: 'radial-gradient(circle, #818cf8, transparent 70%)' }}
         />
 
         {/* Logo */}
-        <div className="relative flex items-center gap-2.5">
+        <Link className="relative flex items-center gap-2.5" to="/">
           <div className="w-8 h-8 bg-white/20 backdrop-blur rounded-[8px] flex items-center justify-center">
             <Scale size={16} className="text-white" />
           </div>
-          <span className="text-white font-semibold text-lg tracking-tight">LegalFlow</span>
-        </div>
+          <span className="text-white font-semibold text-lg tracking-tight">Carta</span>
+        </Link>
 
         {/* Middle content */}
         <div className="relative space-y-8">
@@ -81,10 +124,9 @@ export function LoginPage() {
             ))}
           </div>
 
-          {/* Testimonial */}
           <div className="border-l-2 border-indigo-mid/40 pl-4">
             <p className="text-[13px] text-indigo-mid italic leading-relaxed mb-2">
-              "LegalFlow cut our contract review time by 70%. The clause benchmarking alone saved us from three unfavorable deals last quarter."
+              "Carta cut our contract review time by 70%. The clause benchmarking alone saved us from three unfavorable deals last quarter."
             </p>
             <p className="text-xs text-white/60">Priya Iyer · Partner, Mehta & Iyer LLP</p>
           </div>
@@ -96,7 +138,6 @@ export function LoginPage() {
       {/* Right panel */}
       <div className="flex-1 flex items-center justify-center p-12 bg-white overflow-y-auto">
         <div className="w-full max-w-[380px] space-y-8">
-          {/* Header */}
           <div>
             <h2 className="text-2xl font-semibold text-text mb-1">Welcome back</h2>
             <p className="text-sm text-text-2">
@@ -107,16 +148,37 @@ export function LoginPage() {
             </p>
           </div>
 
-          {/* SSO button */}
-          <button className="w-full flex items-center justify-center gap-3 px-4 py-2.5 border border-border rounded-[8px] text-sm font-medium text-text hover:bg-surface transition-colors">
-            <svg width="18" height="18" viewBox="0 0 21 21" fill="none">
-              <rect x="1" y="1" width="9" height="9" fill="#F25022" />
-              <rect x="11" y="1" width="9" height="9" fill="#7FBA00" />
-              <rect x="1" y="11" width="9" height="9" fill="#00A4EF" />
-              <rect x="11" y="11" width="9" height="9" fill="#FFB900" />
-            </svg>
-            Continue with Microsoft
-          </button>
+          {/* SSO buttons */}
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={() => handleSSO('oauth_google')}
+              disabled={loading || !isLoaded}
+              className="flex items-center justify-center gap-2.5 px-4 py-2.5 border border-border rounded-[8px] text-sm font-medium text-text hover:bg-surface transition-colors disabled:opacity-60"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24">
+                <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+                <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/>
+                <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+              </svg>
+              Google
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSSO('oauth_microsoft')}
+              disabled={loading || !isLoaded}
+              className="flex items-center justify-center gap-2.5 px-4 py-2.5 border border-border rounded-[8px] text-sm font-medium text-text hover:bg-surface transition-colors disabled:opacity-60"
+            >
+              <svg width="16" height="16" viewBox="0 0 21 21" fill="none">
+                <rect x="1" y="1" width="9" height="9" fill="#F25022" />
+                <rect x="11" y="1" width="9" height="9" fill="#7FBA00" />
+                <rect x="1" y="11" width="9" height="9" fill="#00A4EF" />
+                <rect x="11" y="11" width="9" height="9" fill="#FFB900" />
+              </svg>
+              Microsoft
+            </button>
+          </div>
 
           <div className="flex items-center gap-3">
             <div className="flex-1 h-px bg-border" />
@@ -125,14 +187,12 @@ export function LoginPage() {
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Error banner */}
-            {error && (
+            {displayError && (
               <div className="p-3 bg-danger-lt border border-danger/20 rounded-[8px] text-sm text-danger">
-                Please enter your email and password.
+                {displayError}
               </div>
             )}
 
-            {/* Email */}
             <div>
               <label className="block text-sm font-medium text-text mb-1.5">Work email</label>
               <div className="relative">
@@ -142,12 +202,12 @@ export function LoginPage() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="arjun@mehtaiyer.com"
+                  required
                   className="w-full pl-9 pr-4 py-2.5 text-sm border border-border rounded-[8px] bg-white text-text placeholder:text-text-3 focus:outline-none focus:ring-2 focus:ring-indigo/30 focus:border-indigo transition-colors"
                 />
               </div>
             </div>
 
-            {/* Password */}
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <label className="block text-sm font-medium text-text">Password</label>
@@ -162,6 +222,7 @@ export function LoginPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
+                  required
                   className="w-full pl-9 pr-10 py-2.5 text-sm border border-border rounded-[8px] bg-white text-text placeholder:text-text-3 focus:outline-none focus:ring-2 focus:ring-indigo/30 focus:border-indigo transition-colors"
                 />
                 <button
@@ -174,16 +235,14 @@ export function LoginPage() {
               </div>
             </div>
 
-            {/* Remember me */}
             <label className="flex items-center gap-2.5 cursor-pointer">
               <input type="checkbox" className="w-4 h-4 rounded border-border accent-indigo" />
               <span className="text-sm text-text-2">Remember me for 30 days</span>
             </label>
 
-            {/* Submit */}
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || !isLoaded}
               className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo text-white text-sm font-semibold rounded-[8px] hover:bg-indigo-dk transition-colors disabled:opacity-60"
             >
               {loading ? 'Signing in…' : 'Sign in'}
@@ -191,7 +250,6 @@ export function LoginPage() {
             </button>
           </form>
 
-          {/* Security note */}
           <div className="flex items-center gap-2 p-3 bg-surface rounded-[8px]">
             <Shield size={14} className="text-text-3 flex-shrink-0" />
             <p className="text-xs text-text-3">
