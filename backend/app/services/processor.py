@@ -38,17 +38,23 @@ _SPLITTER = RecursiveCharacterTextSplitter(
     separators=["\n\n", "\n", ". ", " ", ""],
 )
 
-# Detects top-level section headings in legal documents.
-# Matches:  "1. DEFINITIONS", "2. Conditions Precedent", "CLAUSE 3 - Warranties",
-#           "SCHEDULE 1", "WHEREAS", "IN WITNESS WHEREOF"
+# Detects section/clause headings in legal documents.
+# Matches numbered clauses ("1.", "1.1", "1.1.1"), CLAUSE/SECTION/ARTICLE keywords,
+# Roman numeral sections ("IV. INDEMNIFICATION"), schedules/exhibits, and standard recitals.
 _SECTION_RE = re.compile(
     r'(?m)^[ \t]*('
-    r'\d{1,2}\.\s+[A-Za-z][^\n]{3,80}'               # "1. Definitions and Interpretation"
-    r'|(?:CLAUSE|SECTION|ARTICLE)\s+[\dA-Z][^\n]{0,80}'  # "CLAUSE 3 - Representations"
+    # "1. Definitions", "1.1 Limitation of Liability", "1.1.1 Scope"
+    r'\d{1,2}(?:\.\d{1,2}){0,2}\.?\s+[A-Z][^\n]{2,80}'
+    # "CLAUSE 3 - Representations", "SECTION 2. Term", "ARTICLE I General"
+    r'|(?:CLAUSE|SECTION|ARTICLE)\s+[\dA-Z][^\n]{0,80}'
+    # "ARTICLE IV", "ARTICLE XII — Indemnification"
+    r'|ARTICLE\s+(?:I{1,4}|IV|VI{0,3}|IX|XI{0,3}|XII|XIII|XIV|XV)[^\n]{0,80}'
+    # "IV. INDEMNIFICATION", "IX. DISPUTE RESOLUTION" — all-caps heading required
+    r'|(?:I{1,4}|IV|VI{0,3}|IX|XI{0,3}|XII|XIII|XIV|XV)\.[ \t]+[A-Z][A-Z0-9 \-]{4,60}$'
     r'|SCHEDULE\s+\d+[^\n]{0,80}'                     # "SCHEDULE 1 - Capitalisation Table"
     r'|EXHIBIT\s+[A-Z\d][^\n]{0,80}'                  # "EXHIBIT A - Form of Notice"
     r'|ANNEXURE\s+[\dA-Z][^\n]{0,80}'                 # "ANNEXURE I - Business Plan"
-    r'|(?:WHEREAS|NOW[,\s]+THEREFORE|IN WITNESS WHEREOF)[^\n]{0,80}'  # Recital / execution markers
+    r'|(?:WHEREAS|NOW[,\s]+THEREFORE|IN WITNESS WHEREOF)[^\n]{0,80}'
     r')[ \t]*$'
 )
 

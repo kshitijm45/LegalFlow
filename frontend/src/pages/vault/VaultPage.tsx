@@ -579,7 +579,7 @@ function CollectionItem({ coll, active, onClick, onRename, onRecolor, onDelete }
       {menuOpen && (
         <>
           <div className="fixed inset-0 z-10" onClick={(e) => { e.stopPropagation(); setMenuOpen(false); setShowColors(false) }} />
-          <div className="absolute left-full top-0 ml-1 w-[160px] bg-white border border-border rounded-[8px] shadow-lg py-1 z-20" onClick={(e) => e.stopPropagation()}>
+          <div className="absolute top-full mt-1 right-0 w-[160px] bg-white border border-border rounded-[8px] shadow-lg py-1 z-20" onClick={(e) => e.stopPropagation()}>
             <button onClick={() => { setEditing(true); setMenuOpen(false) }}
               className="w-full text-left flex items-center gap-2 px-3 py-2 text-[12px] text-text-2 hover:bg-surface transition-colors">
               <Pencil size={11} />Rename
@@ -657,6 +657,22 @@ function BulkToolbar({ count, collections, onBulkDelete, onBulkMove, onClear }: 
       <button onClick={onClear} className="text-text-3 hover:text-text transition-colors ml-1"><X size={14} /></button>
     </div>
   )
+}
+
+// ─── Relevance badge for search results ──────────────────────────────────────
+
+function RelevanceBadge({ score }: { score: number }) {
+  if (score >= 0.80) return (
+    <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-[4px] bg-success-lt text-success flex-shrink-0">
+      <span className="w-1 h-1 rounded-full bg-success" />Strong match
+    </span>
+  )
+  if (score >= 0.60) return (
+    <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-[4px] bg-warning-lt text-warning flex-shrink-0">
+      <span className="w-1 h-1 rounded-full bg-warning" />Good match
+    </span>
+  )
+  return null
 }
 
 // ─── Semantic search modal ────────────────────────────────────────────────────
@@ -738,11 +754,16 @@ function SearchModal({ onClose, onSelect }: { onClose: () => void; onSelect: (c:
                   {clauses.map((clause, ci) => (
                     <button key={ci} onClick={() => { onSelect(clause); onClose() }}
                       className="w-full text-left bg-surface border border-border rounded-[8px] px-3.5 py-3 hover:border-indigo/40 hover:bg-indigo-lt/30 transition-colors">
-                      {clause.section_heading && (
-                        <p className="text-[10.5px] font-bold text-indigo uppercase tracking-[0.4px] mb-1.5">
-                          {clause.section_heading}
-                        </p>
-                      )}
+                      <div className="flex items-start justify-between gap-2 mb-1.5">
+                        {clause.section_heading ? (
+                          <p className="text-[10.5px] font-bold text-indigo uppercase tracking-[0.4px] leading-snug">
+                            {clause.section_heading}
+                          </p>
+                        ) : (
+                          <span />
+                        )}
+                        <RelevanceBadge score={clause.score} />
+                      </div>
                       <p className="text-[12px] text-text-2 leading-relaxed line-clamp-3">{clause.snippet}</p>
                     </button>
                   ))}

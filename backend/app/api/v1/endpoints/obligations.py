@@ -36,34 +36,45 @@ router = APIRouter(prefix="/obligations", tags=["obligations"])
 
 _OBLIGATION_PROMPT = PromptTemplate(
     input_variables=["text", "today"],
-    template="""You are a legal analyst specialising in contract obligation extraction.
+    template="""You are a senior legal analyst specialising in contract obligation extraction.
 
-Extract ALL contractual obligations — duties, responsibilities, and requirements that any party MUST perform.
+Extract ALL contractual obligations — including duties, responsibilities, covenants, undertakings, restrictions, consent requirements, warranties, representations, and indemnities that any party MUST or MUST NOT perform.
 
 Today's date: {today}
 
 Return ONLY a valid JSON array of obligation objects (no extra text, no markdown fences). Each object must have exactly these fields:
 {{
   "title": "short action-oriented title (max 8 words, start with a verb)",
-  "description": "1–2 sentence description of what must be done and why",
+  "description": "1–2 sentence description of what must be done, by whom, and why",
   "responsible_party": "name or role of the party who must perform this obligation, or null",
   "due_date": "YYYY-MM-DD if a specific date applies, else null",
   "recurrence": "one-time | monthly | quarterly | annual | null",
-  "category": "payment | notice | delivery | reporting | compliance | other",
+  "category": "payment | notice | delivery | reporting | compliance | covenant | restriction | consent | undertaking | warranty | indemnity | other",
   "section": "section number or clause heading where this appears, or null",
   "source_clause": "the exact verbatim clause text (max 200 chars) or null"
 }}
 
+Obligation types to extract — scan for these language patterns:
+- payment: "shall pay", "is required to pay", fees, invoices, amounts, milestones, penalties
+- notice: "shall provide notice", "written notice required", termination notice, notice periods
+- delivery: "shall deliver", "shall provide", "shall supply", goods, services, documents
+- reporting: "shall submit", "shall furnish", audits, certifications, financial statements, disclosures
+- compliance: "shall comply with", regulatory requirements, insurance, confidentiality, data protection, GDPR
+- covenant: "covenants that", "covenants to", "agrees that", ongoing promises (non-payment) sustained over the term
+- restriction: "shall not", "must not", "is prohibited from", non-compete, non-solicitation, exclusivity, use restrictions
+- consent: "subject to prior written consent", "shall not without approval", "requires written approval of"
+- undertaking: "undertakes to", "commits to", "agrees to" perform a specific act by a deadline or condition
+- warranty: "warrants that", "warrants and represents", "represents and warrants", maintenance of a stated condition
+- indemnity: "shall indemnify", "shall defend", "shall hold harmless", "shall bear the cost of"
+
 Rules:
-- Extract 5–20 obligations maximum
-- Include payment obligations (amounts, schedule)
-- Include notice obligations (required notice periods, termination notice)
-- Include delivery obligations (goods, services, documents)
-- Include reporting obligations (financial reports, audits, certifications)
-- Include compliance obligations (regulatory, insurance, confidentiality)
-- Only include genuine obligations — skip aspirational language ("shall endeavour to")
-- If a recurrence is mentioned (monthly, quarterly, etc.) set the recurrence field
-- Skip obvious boilerplate like "parties agree to be bound by this agreement"
+- Extract every genuine obligation — there is no cap; complex contracts typically have 15–40+
+- Include both positive obligations ("shall do X") AND negative obligations ("shall not do X")
+- Include conditional obligations that require one party's consent before the other may act
+- If a recurrence is mentioned (monthly, quarterly, annual) set the recurrence field accordingly
+- If a single clause creates multiple distinct obligations, extract each as a separate item
+- Skip purely aspirational or hortatory language with no concrete deliverable ("shall endeavour to", "shall use best endeavours" alone with no specified output)
+- Skip obvious boilerplate that imposes no real duty ("the parties agree to be bound by this agreement")
 
 Contract text:
 {text}""",
@@ -72,6 +83,7 @@ Contract text:
 
 class ExtractRequest(BaseModel):
     contract_ids: list[str]
+    force_regenerate: bool = False
 
 
 class UpdateObligationRequest(BaseModel):
@@ -250,14 +262,19 @@ async def extract_obligations(
         if contract.uploaded_by != user.id and (not org_ids or contract.org_id not in org_ids):
             continue
 
-        # Check cache — if obligations already extracted for this contract, return them
+        # Check cache unless the caller explicitly wants a fresh extraction.
         existing = await db.execute(
             select(Obligation).where(Obligation.contract_id == contract_uuid)
         )
         cached = existing.scalars().all()
-        if cached:
+        if cached and not body.force_regenerate:
             all_obligations.extend(cached)
             continue
+
+        if cached and body.force_regenerate:
+            for obligation in cached:
+                await db.delete(obligation)
+            await db.commit()
 
         # Get text — use stored full_text if available, otherwise fall back to S3 download
         if contract.full_text:

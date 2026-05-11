@@ -38,34 +38,71 @@ router = APIRouter(prefix="/timeline", tags=["timeline"])
 
 _TIMELINE_PROMPT = PromptTemplate(
     input_variables=["text", "today"],
-    template="""You are a legal analyst specializing in contract timeline extraction.
+    template="""You are a legal analyst specializing in timeline extraction from diverse legal documents.
 
-Extract ALL time-bound events from this contract — dates, deadlines, milestones, payments, renewals, reviews, and the contract start date.
+Extract ALL time-bound events from this document — dates, deadlines, milestones, payments, judgments, filings, hearings, vesting schedules, and key dates specific to the document type.
 
 Today's date: {today}
+
+DOCUMENT TYPE DETECTION:
+- If it contains: "judgment", "verdict", "court order", "plaintiff", "defendant", "appeal" → CASE JUDGMENT
+- If it contains: "discovery", "deposition", "interrogatory", "litigation", "complaint", "filing" → LITIGATION DOCUMENT
+- If it contains: "share", "stock", "equity", "vesting", "exercise", "warrant" → SHARE/EQUITY AGREEMENT
+- Otherwise → CONTRACT
 
 Return ONLY a valid JSON array of event objects (no extra text, no markdown fences). Each object must have exactly these fields:
 {{
   "title": "short descriptive title (max 8 words)",
   "date": "YYYY-MM-DD",
-  "type": "start | milestone | deadline | renewal | payment | review",
+  "type": "start | milestone | deadline | renewal | payment | review | judgment_date | appeal_deadline | trial_date | filing_date | discovery_deadline | deposition | motion_date | vesting_event | lockup_expiry | exercise_date | acquisition_event",
   "description": "1 sentence description of this event",
   "section": "section number or clause heading where this appears, or null",
   "sourceClause": "the exact verbatim clause text (max 200 chars) or null",
-  "amount": "currency amount string if this is a payment event (e.g. '$50,000'), or null"
+  "amount": "currency amount string if applicable (e.g. '$50,000', '100,000 shares'), or null"
 }}
 
-Rules:
-- Extract 5–15 events maximum
-- Include the contract effective/start date as type "start"
+EXTRACTION RULES BY DOCUMENT TYPE:
+
+CONTRACT (includes commercial agreements, NDAs, MSAs, service agreements):
+- Include effective/start date as type "start"
 - Include expiry/termination date as type "deadline"
 - Include every payment schedule entry as type "payment"
-- Include every renewal window or notice deadline as type "renewal"
-- Include review periods as type "review"
+- Include renewal windows and notice deadlines as type "renewal"
+- Include review/audit periods as type "review"
 - Include key milestones (delivery, go-live, acceptance, etc.) as type "milestone"
-- Only include events with a specific YYYY-MM-DD date — skip vague references
 
-Contract text:
+CASE JUDGMENT (court decisions, verdicts, orders):
+- Include judgment/verdict date as type "judgment_date"
+- Include appeal deadline as type "appeal_deadline"
+- Include trial/hearing dates as type "trial_date"
+- Include stay/effectiveness dates as type "milestone"
+- Include sentence/penalty implementation dates as type "deadline"
+- Include post-judgment deadlines (payment of damages, compliance, etc.) as type "deadline"
+
+LITIGATION DOCUMENT (complaints, discovery requests, motions):
+- Include case filing date as type "filing_date"
+- Include discovery deadline dates as type "discovery_deadline"
+- Include deposition dates as type "deposition"
+- Include motion hearing/ruling dates as type "motion_date"
+- Include response/reply deadlines as type "deadline"
+- Include settlement conference dates as type "milestone"
+
+SHARE/EQUITY AGREEMENT (stock purchase, vesting, equity plans):
+- Include acquisition/purchase date as type "start"
+- Include vesting schedule dates as type "vesting_event"
+- Include lock-up period expiration dates as type "lockup_expiry"
+- Include option/warrant exercise deadlines as type "exercise_date"
+- Include IPO lock-up dates as type "lockup_expiry"
+- Include clawback/repurchase deadlines as type "deadline"
+
+UNIVERSAL RULES (apply to all document types):
+- Extract 5–20 events maximum (prioritize: most important dates first)
+- Only include events with a specific YYYY-MM-DD date — skip vague references (e.g., "within 30 days", "by end of year")
+- If a date is relative (e.g., "30 days after closing"), try to calculate it only if a reference date is explicit
+- Include exact dates with certainty; skip ambiguous or conditional dates
+- Use the most specific date if multiple dates are given for the same event
+
+Document text:
 {text}""",
 )
 
@@ -93,8 +130,11 @@ class TimelineGenerateResponse(BaseModel):
     events: list[TimelineEventOut]
 
 
-# Deadline, payment, review, AND renewal are actionable past-due — mark them overdue
-_OVERDUE_TYPES = {"deadline", "payment", "review", "renewal"}
+# Event types that should be marked as "overdue" if they're in the past (actionable deadlines/critical events)
+_OVERDUE_TYPES = {
+    "deadline", "payment", "review", "renewal",  # Contract events
+    "appeal_deadline", "discovery_deadline", "exercise_date",  # Litigation & equity events
+}
 
 
 def _compute_status(event_date_str: str, event_type: str, today: date) -> str:

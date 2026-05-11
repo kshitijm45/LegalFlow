@@ -25,9 +25,9 @@ export function useExtractObligations() {
   const getToken = useToken()
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (contractIds: string[]) => {
+    mutationFn: async ({ contractIds, forceRegenerate = false }: { contractIds: string[]; forceRegenerate?: boolean }) => {
       const token = await getToken()
-      return obligationsApi.extract(token, contractIds)
+      return obligationsApi.extract(token, contractIds, forceRegenerate)
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['obligations'] }),
   })

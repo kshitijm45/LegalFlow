@@ -162,9 +162,10 @@ async def _run_ai(node: dict, ctx: ExecutionContext, db: AsyncSession) -> dict:
             from langchain_core.output_parsers import StrOutputParser
             import json, re
             from datetime import date
-            prompt = PromptTemplate(input_variables=["text", "today"], template="""Extract obligations from this contract as a JSON array.
+            prompt = PromptTemplate(input_variables=["text", "today"], template="""You are a senior legal analyst. Extract ALL contractual obligations from this contract — including duties, covenants, undertakings, restrictions, consent requirements, warranties, and indemnities.
 Today: {today}
-Return JSON array only, no markdown. Each item: {{"title":"...","description":"...","due_date":"YYYY-MM-DD or null","category":"payment|notice|delivery|reporting|compliance|other"}}
+Return JSON array only, no markdown. Each item must include: {{"title":"verb-led title (max 8 words)","description":"1-2 sentences","responsible_party":"party name or null","due_date":"YYYY-MM-DD or null","recurrence":"one-time|monthly|quarterly|annual|null","category":"payment|notice|delivery|reporting|compliance|covenant|restriction|consent|undertaking|warranty|indemnity|other","section":"section ref or null","source_clause":"verbatim text max 200 chars or null"}}
+Scan for: shall/must/will, shall not/must not, covenants to, undertakes to, warrants that, subject to prior written consent, shall indemnify, shall not without approval. Extract both positive AND negative obligations. No cap on count — extract all genuine obligations.
 CONTRACT:
 {text}""")
             llm = get_fast_llm()
@@ -323,8 +324,9 @@ async def _run_action(node: dict, ctx: ExecutionContext, db: AsyncSession) -> di
             from datetime import date
             if not contract.full_text:
                 return {"status": "skipped", "message": "Contract has no extracted text", "output": {}}
-            prompt = PromptTemplate(input_variables=["text", "today"], template="""Extract obligations. Today: {today}.
-Return JSON array only. Each: {{"title":"...","description":"...","responsible_party":null,"due_date":"YYYY-MM-DD or null","recurrence":"one-time|monthly|quarterly|annual|null","category":"payment|notice|delivery|reporting|compliance|other","section":null,"source_clause":null}}
+            prompt = PromptTemplate(input_variables=["text", "today"], template="""You are a senior legal analyst. Extract ALL contractual obligations — duties, covenants, undertakings, restrictions, consent requirements, warranties, and indemnities. Today: {today}.
+Return JSON array only, no markdown. Each: {{"title":"verb-led title (max 8 words)","description":"1-2 sentences","responsible_party":"party name or null","due_date":"YYYY-MM-DD or null","recurrence":"one-time|monthly|quarterly|annual|null","category":"payment|notice|delivery|reporting|compliance|covenant|restriction|consent|undertaking|warranty|indemnity|other","section":"section ref or null","source_clause":"verbatim text max 200 chars or null"}}
+Scan for: shall/must/will, shall not/must not, covenants to, undertakes to, warrants that, subject to prior written consent, shall indemnify, shall not without approval. Extract both positive AND negative obligations. No cap — extract all genuine obligations.
 CONTRACT: {text}""")
             llm = get_fast_llm()
             chain = prompt | llm | StrOutputParser()
@@ -333,7 +335,7 @@ CONTRACT: {text}""")
             raw = re.sub(r"\s*```$", "", raw, flags=re.MULTILINE)
             items = json.loads(raw.strip())
             from datetime import date as date_cls
-            for item in items[:20]:
+            for item in items:
                 due = None
                 if item.get("due_date"):
                     try: due = date_cls.fromisoformat(item["due_date"])

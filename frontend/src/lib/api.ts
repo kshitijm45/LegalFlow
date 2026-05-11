@@ -160,10 +160,10 @@ export interface ObligationCreate {
 }
 
 export const obligationsApi = {
-  extract: (token: string, contractIds: string[]) =>
+  extract: (token: string, contractIds: string[], forceRegenerate = false) =>
     apiFetch<{ obligations: ObligationDTO[] }>('/api/v1/obligations/extract', token, {
       method: 'POST',
-      body: JSON.stringify({ contract_ids: contractIds }),
+      body: JSON.stringify({ contract_ids: contractIds, force_regenerate: forceRegenerate }),
     }),
 
   list: (token: string, params?: { status_filter?: string; category?: string }) =>

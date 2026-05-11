@@ -612,7 +612,13 @@ export function ObligationsPage() {
   function handleExtract() {
     if (selectedIds.size === 0) return
     setPickerOpen(false)
-    extractMutation.mutate([...selectedIds])
+    extractMutation.mutate({ contractIds: [...selectedIds] })
+  }
+
+  function handleReextract() {
+    if (selectedIds.size === 0) return
+    setPickerOpen(false)
+    extractMutation.mutate({ contractIds: [...selectedIds], forceRegenerate: true })
   }
 
   // Use backend obligations (persistent). If extraction just happened, query cache is refreshed automatically.
@@ -633,7 +639,7 @@ export function ObligationsPage() {
   const isLoading = obligationsLoading || extractMutation.isPending
 
   function handleExportCsv() {
-    const header = ['Title', 'Category', 'Status', 'Due Date', 'Recurrence', 'Responsible Party', 'Description']
+    const header = ['Title', 'Category', 'Status', 'Due Date', 'Recurrence', 'Responsible Party', 'Clause Number', 'Description', 'Source Clause']
     const rows = displayed.map(o => [
       o.title,
       categoryConfig[o.category]?.label ?? o.category,
@@ -641,7 +647,9 @@ export function ObligationsPage() {
       o.due_date ?? '',
       o.recurrence ?? '',
       o.responsible_party ?? '',
+      o.section ?? '',
       o.description ?? '',
+      o.source_clause ?? '',
     ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
     const csv = [header.join(','), ...rows].join('\n')
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
@@ -724,6 +732,13 @@ export function ObligationsPage() {
             {extractMutation.isPending
               ? <><Loader2 size={13} className="animate-spin" /> Extracting…</>
               : <><Sparkles size={13} /> Extract Obligations</>}
+          </button>
+          <button
+            className="flex items-center gap-1.5 px-4 py-[7px] text-[13px] font-semibold rounded-[7px] transition-colors disabled:opacity-40 disabled:cursor-not-allowed border border-warning/40 bg-warning-lt text-warning hover:border-warning"
+            disabled={selectedIds.size === 0 || extractMutation.isPending}
+            onClick={handleReextract}
+            title="Bypass cached obligations and refresh from the current extraction prompt">
+            <Sparkles size={13} /> Re-extract
           </button>
         </div>
       </div>

@@ -536,18 +536,100 @@ async def delete_collection(
 
 
 # ---------------------------------------------------------------------------
+# Semantic search helpers
+# ---------------------------------------------------------------------------
+
+# Common legal clause queries mapped to synonyms that appear in contract text.
+# Expanding the query before embedding improves recall for short/ambiguous terms.
+_LEGAL_EXPANSIONS: dict[str, str] = {
+    "liability cap":            "limitation of liability aggregate maximum cap damages",
+    "limitation of liability":  "liability cap aggregate maximum damages indirect consequential",
+    "non-compete":              "non-competition restrictive covenant solicit employees customers",
+    "non-competition":          "non-compete restrictive covenant solicit",
+    "non-solicitation":         "non-solicitation restrictive covenant solicit employees clients",
+    "indemnification":          "indemnify indemnity hold harmless defend losses claims damages",
+    "indemnity":                "indemnification hold harmless defend losses third party claims",
+    "termination for convenience": "terminate without cause termination notice period right to terminate",
+    "termination rights":       "right to terminate termination clause notice period cure",
+    "data breach":              "security incident breach notification personal data exposure",
+    "data breach notice":       "breach notification data security incident reporting obligation",
+    "governing law":            "choice of law applicable law jurisdiction venue courts",
+    "force majeure":            "act of god unforeseen circumstances excused performance delay",
+    "intellectual property":    "IP assignment ownership copyright patent trade secret work product",
+    "ip assignment":            "intellectual property assignment ownership work product copyright",
+    "confidentiality":          "confidential information non-disclosure trade secrets NDA",
+    "warranty":                 "representation warranty condition express implied covenant",
+    "representations":          "representation warranty conditions precedent covenant",
+    "dispute resolution":       "arbitration mediation litigation forum choice of law venue",
+    "change of control":        "acquisition merger change control assignment transfer consent",
+    "assignment":               "assignment transfer novation change of control consent required",
+    "audit rights":             "audit inspection records books accounts right to audit",
+    "payment terms":            "invoice payment due date net days late fee interest penalty",
+    "renewal":                  "auto-renewal automatic renewal term extension notice period",
+    "most favored nation":      "MFN most favored nation pricing parity",
+    "liquidated damages":       "liquidated damages penalty clause breach remedy",
+}
+
+
+def _expand_legal_query(query: str) -> str:
+    """Append legal synonym expansions to the query to improve embedding recall."""
+    lower = query.lower().strip()
+    extras: list[str] = []
+    for term, expansion in _LEGAL_EXPANSIONS.items():
+        if term in lower:
+            extras.append(expansion)
+    if extras:
+        return query + " " + " ".join(extras)
+    return query
+
+
+def _extract_snippet(text: str, query: str, max_len: int = 400) -> str:
+    """Return a window of text centered on the earliest keyword match.
+
+    Falls back to the beginning of the chunk when no query term is found.
+    """
+    meaningful = [w.strip('",;:.()') for w in query.lower().split() if len(w.strip('",;:.()')) >= 4]
+    lower = text.lower()
+
+    best_pos = -1
+    for word in meaningful:
+        pos = lower.find(word)
+        if pos != -1 and (best_pos == -1 or pos < best_pos):
+            best_pos = pos
+
+    if best_pos == -1:
+        snippet = text[:max_len]
+        return snippet + ("…" if len(text) > max_len else "")
+
+    # Place the match ~1/4 from the start of the window so context follows
+    start = max(0, best_pos - max_len // 4)
+    end = min(len(text), start + max_len)
+
+    # Nudge start forward to a word boundary
+    if start > 0:
+        sp = text.find(' ', start)
+        if sp != -1 and sp <= start + 20:
+            start = sp + 1
+
+    snippet = text[start:end]
+    prefix = "…" if start > 0 else ""
+    suffix = "…" if end < len(text) else ""
+    return prefix + snippet + suffix
+
+
+# ---------------------------------------------------------------------------
 # Semantic search
 # ---------------------------------------------------------------------------
 
 class SearchRequest(BaseModel):
     query: str
-    top_k: int = 10
+    top_k: int = 10  # max results returned to the caller (capped at _SEARCH_MAX_RESULTS)
 
 
-_SEARCH_SCORE_THRESHOLD = 0.45
-_SEARCH_TOP_K_INTERNAL  = 60
-_SEARCH_MAX_PER_CONTRACT = 3
-_SEARCH_MAX_RESULTS     = 15
+_SEARCH_SCORE_THRESHOLD  = 0.45
+_SEARCH_TOP_K_INTERNAL   = 60   # candidates fetched from Pinecone before re-ranking
+_SEARCH_MAX_PER_CONTRACT = 3    # max clauses shown per contract
+_SEARCH_MAX_RESULTS      = 15   # hard ceiling on total returned results
 
 
 @router.post("/search")
@@ -564,8 +646,11 @@ async def search_vault(
     user = await _get_user(claims, db)
     org_id = user.memberships[0].org_id if user.memberships else None
 
+    raw_query = body.query.strip()
+    expanded_query = _expand_legal_query(raw_query)
+
     embeddings_model = get_embeddings()
-    query_vec = await asyncio.to_thread(embeddings_model.embed_query, body.query.strip())
+    query_vec = await asyncio.to_thread(embeddings_model.embed_query, expanded_query)
 
     pc = Pinecone(api_key=settings.pinecone_api_key)
     index = pc.Index(settings.pinecone_index)
@@ -585,17 +670,27 @@ async def search_vault(
 
     matches = [m for m in resp.get("matches", []) if m.get("score", 0) >= _SEARCH_SCORE_THRESHOLD]
     if not matches:
-        return {"results": [], "query": body.query}
+        return {"results": [], "query": raw_query}
 
+    # Keep only the best-scoring chunk per (contract, section) pair.
+    # Chunks without a heading fall back to grouping by adjacent chunk index
+    # so sub-paragraph splits of the same clause aren't all shown.
     best_per_clause: dict[tuple[str, str], dict] = {}
     for m in matches:
         cid     = m["metadata"].get("contract_id", "")
-        heading = m["metadata"].get("section_heading", "")
-        key = (cid, heading if heading else m["metadata"].get("text", "")[:60])
+        heading = m["metadata"].get("section_heading", "").strip()
+        if heading:
+            clause_key = heading
+        else:
+            # Group adjacent chunks (every 2) as the same logical unit
+            chunk_idx = int(m["metadata"].get("chunk_index", 0))
+            clause_key = f"__chunk_{chunk_idx // 2}"
+        key = (cid, clause_key)
         if key not in best_per_clause or m["score"] > best_per_clause[key]["score"]:
             best_per_clause[key] = m
 
     ranked = sorted(best_per_clause.values(), key=lambda m: m["score"], reverse=True)
+    max_results = min(body.top_k, _SEARCH_MAX_RESULTS)
     seen_per_contract: dict[str, int] = {}
     filtered: list[dict] = []
     for m in ranked:
@@ -604,7 +699,7 @@ async def search_vault(
             continue
         seen_per_contract[cid] = seen_per_contract.get(cid, 0) + 1
         filtered.append(m)
-        if len(filtered) >= _SEARCH_MAX_RESULTS:
+        if len(filtered) >= max_results:
             break
 
     # DB ownership check uses the same org-aware filter as the rest of the API
@@ -621,14 +716,15 @@ async def search_vault(
         if cid not in contracts:
             continue
         c = contracts[cid]
+        chunk_text = m["metadata"].get("text", "")
         results.append({
             **_contract_to_dict(c),
             "score":           round(m["score"], 4),
-            "snippet":         m["metadata"].get("text", "")[:500],
-            "section_heading": m["metadata"].get("section_heading", "") or None,
+            "snippet":         _extract_snippet(chunk_text, raw_query),
+            "section_heading": m["metadata"].get("section_heading", "").strip() or None,
         })
 
-    return {"results": results, "query": body.query}
+    return {"results": results, "query": raw_query}
 
 
 # ---------------------------------------------------------------------------
