@@ -20,6 +20,9 @@ class Collection(Base):
     created_by: Mapped[Optional[uuid.UUID]] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
+    parent_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("collections.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     name: Mapped[str] = mapped_column(String(256))
     color: Mapped[str] = mapped_column(String(16), default="#4338CA")
     created_at: Mapped[datetime] = mapped_column(

@@ -742,7 +742,7 @@ def _parse_json_block(raw: str) -> dict[str, Any]:
 async def run_clause_audit(
     full_text: str,
     playbook_types: list[str],
-    audit_max_chars: int = 120_000,
+    audit_max_chars: int = 300_000,
 ) -> tuple[list[dict[str, Any]], float]:
     """Run clause audit. Returns (results_list, overall_score)."""
     clauses = merge_clauses(playbook_types)

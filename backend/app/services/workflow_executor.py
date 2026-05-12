@@ -20,6 +20,8 @@ import uuid
 from collections import deque
 from datetime import datetime, timezone
 from typing import Any
+import json
+import re
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,6 +45,8 @@ class ExecutionContext:
         self.timeline_count: int | None = None
         # branch_results[node_id] = True/False
         self.branch_results: dict[str, bool] = {}
+        # Latest output for each node type, used for template interpolation.
+        self.node_outputs: dict[str, dict[str, Any]] = {}
 
     def get_field(self, field: str) -> Any:
         """Resolve a branch condition field from contract data or runtime context."""
@@ -59,6 +63,82 @@ class ExecutionContext:
                 delta = (self.contract.expiry_date - datetime.now(timezone.utc).date())
                 return delta.days
         return None
+
+    def template_vars(self) -> dict[str, Any]:
+        """Return nested template variables for notify/webhook payloads."""
+        contract = self.contract
+        ai_output = self.node_outputs.get("ai", {})
+        action_output = self.node_outputs.get("action", {})
+        notify_output = self.node_outputs.get("notify", {})
+
+        if contract:
+            contract_date = contract.effective_date.isoformat() if contract.effective_date else ""
+            document_type = contract.contract_type or ""
+        else:
+            contract_date = ""
+            document_type = ""
+
+        ai_summary = (
+            ai_output.get("summary")
+            or ai_output.get("audit_summary")
+            or self.audit_summary
+            or ""
+        )
+
+        return {
+            "document": {
+                "id": str(contract.id) if contract else "",
+                "name": contract.name if contract else "",
+                "type": document_type,
+                "parties": ", ".join(contract.parties or []) if contract else "",
+                "date": contract_date,
+                "summary": contract.summary or "",
+                "page_count": contract.page_count or "",
+            },
+            "ai": {
+                "summary": ai_summary,
+                "risk_score": ai_output.get("risk_score", self.risk_score or ""),
+                "risk_level": ai_output.get("risk_level", ""),
+                "key_risks": ai_output.get("key_risks", []),
+                "findings": ai_output.get("findings", []),
+                "missing_clauses": ai_output.get("missing_clauses", []),
+                "obligations": ai_output.get("obligations", []),
+            },
+            "action": action_output,
+            "notify": notify_output,
+            "workflow": {
+                "risk_score": self.risk_score if self.risk_score is not None else "",
+                "audit_summary": self.audit_summary or "",
+                "obligations_count": self.obligations_count if self.obligations_count is not None else "",
+                "timeline_count": self.timeline_count if self.timeline_count is not None else "",
+            },
+        }
+
+
+_TEMPLATE_VAR_RE = re.compile(r"{{\s*([a-zA-Z0-9_.-]+)\s*}}")
+
+
+def _resolve_template_value(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (str, int, float, bool)):
+        return str(value)
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _render_template(template: str, variables: dict[str, Any]) -> str:
+    def replace(match: re.Match[str]) -> str:
+        path = match.group(1).split(".")
+        value: Any = variables
+        for part in path:
+            if isinstance(value, dict) and part in value:
+                value = value[part]
+            else:
+                return ""
+        return _resolve_template_value(value)
+
+    rendered = _TEMPLATE_VAR_RE.sub(replace, template)
+    return rendered.replace("{contract}", variables.get("document", {}).get("name", ""))
 
 
 # ── Graph helpers ─────────────────────────────────────────────────────────────
@@ -170,7 +250,7 @@ CONTRACT:
 {text}""")
             llm = get_fast_llm()
             chain = prompt | llm | StrOutputParser()
-            raw = await chain.ainvoke({"text": contract.full_text[:60_000], "today": str(date.today())})
+            raw = await chain.ainvoke({"text": contract.full_text[:300_000], "today": str(date.today())})
             raw = re.sub(r"^```(?:json)?\s*", "", raw.strip(), flags=re.MULTILINE)
             raw = re.sub(r"\s*```$", "", raw, flags=re.MULTILINE)
             items = json.loads(raw.strip())
@@ -192,7 +272,7 @@ CONTRACT:
             llm = get_fast_llm()
             chain = prompt | llm | StrOutputParser()
             import json, re
-            raw = await chain.ainvoke({"text": contract.full_text[:60_000]})
+            raw = await chain.ainvoke({"text": contract.full_text[:300_000]})
             raw = re.sub(r"^```(?:json)?\s*", "", raw.strip(), flags=re.MULTILINE)
             raw = re.sub(r"\s*```$", "", raw, flags=re.MULTILINE)
             result = json.loads(raw.strip())
@@ -214,7 +294,7 @@ CONTRACT:
 {text}""")
             llm = get_fast_llm()
             chain = prompt | llm | StrOutputParser()
-            raw = await chain.ainvoke({"text": contract.full_text[:60_000]})
+            raw = await chain.ainvoke({"text": contract.full_text[:300_000]})
             raw = re.sub(r"^```(?:json)?\s*", "", raw.strip(), flags=re.MULTILINE)
             raw = re.sub(r"\s*```$", "", raw, flags=re.MULTILINE)
             result = json.loads(raw.strip())
@@ -330,7 +410,7 @@ Scan for: shall/must/will, shall not/must not, covenants to, undertakes to, warr
 CONTRACT: {text}""")
             llm = get_fast_llm()
             chain = prompt | llm | StrOutputParser()
-            raw = await chain.ainvoke({"text": contract.full_text[:60_000], "today": str(date.today())})
+            raw = await chain.ainvoke({"text": contract.full_text[:300_000], "today": str(date.today())})
             raw = re.sub(r"^```(?:json)?\s*", "", raw.strip(), flags=re.MULTILINE)
             raw = re.sub(r"\s*```$", "", raw, flags=re.MULTILINE)
             items = json.loads(raw.strip())
@@ -369,7 +449,7 @@ Return JSON array: [{{"title":"...","date":"YYYY-MM-DD","type":"start|milestone|
 CONTRACT: {text}""")
             llm = get_fast_llm()
             chain = prompt | llm | StrOutputParser()
-            raw = await chain.ainvoke({"text": contract.full_text[:60_000]})
+            raw = await chain.ainvoke({"text": contract.full_text[:300_000]})
             raw = re.sub(r"^```(?:json)?\s*", "", raw.strip(), flags=re.MULTILINE)
             raw = re.sub(r"\s*```$", "", raw, flags=re.MULTILINE)
             events = json.loads(raw.strip())
@@ -405,8 +485,7 @@ async def _run_notify(node: dict, ctx: ExecutionContext, db: AsyncSession) -> di
     if not recipients:
         return {"status": "skipped", "message": "No recipients configured", "output": {}}
 
-    contract_name = ctx.contract.name if ctx.contract else "N/A"
-    message = template.replace("{contract}", contract_name)
+    message = _render_template(template, ctx.template_vars())
 
     sent_to: list[str] = []
     errors: list[str] = []
@@ -517,6 +596,14 @@ async def execute_workflow(
             except Exception as exc:
                 result = {"status": "failed", "message": str(exc), "output": {}}
 
+            output = result.get("output", {})
+            if isinstance(output, dict):
+                ctx.node_outputs[node_type] = output
+                if node_type == "ai":
+                    summary = output.get("summary")
+                    if summary:
+                        ctx.audit_summary = str(summary)
+
             elapsed_ms = round((time.monotonic() - t0) * 1000)
 
             entry = {
@@ -525,7 +612,7 @@ async def execute_workflow(
                 "node_label": node.get("data", {}).get("label", node_type),
                 "status":     result["status"],
                 "message":    result["message"],
-                "output":     result.get("output", {}),
+                "output":     output,
                 "duration_ms": elapsed_ms,
             }
             run_log.append(entry)

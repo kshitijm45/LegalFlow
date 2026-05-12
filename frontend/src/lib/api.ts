@@ -1,7 +1,11 @@
 const BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
-const DEFAULT_TIMEOUT_MS = 30_000
+// Default 0 => no timeout (useful for long-running LLM-backed endpoints like clause audit)
+const DEFAULT_TIMEOUT_MS = 0
 
-function withTimeout(options: RequestInit, ms: number): [RequestInit, AbortController] {
+function withTimeout(options: RequestInit, ms: number): [RequestInit, AbortController | null] {
+  if (!ms || ms <= 0) {
+    return [options, null]
+  }
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), ms)
   const cleanup = () => clearTimeout(timer)
@@ -105,6 +109,7 @@ export interface CollectionDTO {
   id: string
   name: string
   color: string
+  parent_id: string | null
   created_at: string
 }
 
@@ -428,13 +433,13 @@ export const vaultApi = {
   listCollections: (token: string) =>
     apiFetch<{ collections: CollectionDTO[] }>('/api/v1/vault/collections', token),
 
-  createCollection: (token: string, name: string, color = '#4338CA') =>
+  createCollection: (token: string, name: string, color = '#4338CA', parent_id?: string | null) =>
     apiFetch<CollectionDTO>('/api/v1/vault/collections', token, {
       method: 'POST',
-      body: JSON.stringify({ name, color }),
+      body: JSON.stringify({ name, color, parent_id: parent_id ?? null }),
     }),
 
-  updateCollection: (token: string, id: string, patch: { name?: string; color?: string }) =>
+  updateCollection: (token: string, id: string, patch: { name?: string; color?: string; parent_id?: string | null }) =>
     apiFetch<CollectionDTO>(`/api/v1/vault/collections/${id}`, token, {
       method: 'PATCH',
       body: JSON.stringify(patch),
@@ -540,4 +545,71 @@ export const workflowApi = {
 
   getRun: (token: string, runId: string) =>
     apiFetch<WorkflowRunDTO>(`/api/v1/workflows/runs/${runId}`, token),
+}
+
+// ─── Market Analysis ──────────────────────────────────────────────────────────
+
+export interface MarketAnalysisClauseDTO {
+  id: string
+  clause_key: string
+  clause_name: string
+  found_text: string | null
+  position: -2 | -1 | 0 | 1 | 2
+  position_label: string
+  market_standard: string | null
+  explanation: string | null
+  suggested_rewrite: string | null
+  risk_level: 'high' | 'medium' | 'low'
+  mandatory: boolean
+}
+
+export interface MarketAnalysisDTO {
+  id: string
+  contract_id: string
+  contract_name: string
+  deal_type: string
+  perspective: string
+  status: 'pending' | 'running' | 'done' | 'failed'
+  error: string | null
+  overall_position: number | null
+  created_at: string
+  clauses: MarketAnalysisClauseDTO[]
+}
+
+export interface DealTypePerspective {
+  key: string
+  label: string
+}
+
+export interface DealTypeDTO {
+  key: string
+  name: string
+  perspectives: DealTypePerspective[]
+}
+
+export const marketAnalysisApi = {
+  getDealTypes: (token: string) =>
+    apiFetch<{ deal_types: DealTypeDTO[] }>('/api/v1/market-analysis/deal-types', token),
+
+  detect: (token: string, contractId: string) =>
+    apiFetch<{ detected_deal_type: string | null; perspectives: DealTypePerspective[] }>(
+      `/api/v1/market-analysis/detect/${contractId}`,
+      token,
+      { method: 'POST' },
+    ),
+
+  run: (token: string, contractId: string, dealType: string, perspective: string) =>
+    apiFetch<MarketAnalysisDTO>('/api/v1/market-analysis/run', token, {
+      method: 'POST',
+      body: JSON.stringify({ contract_id: contractId, deal_type: dealType, perspective }),
+    }),
+
+  listForContract: (token: string, contractId: string) =>
+    apiFetch<{ analyses: MarketAnalysisDTO[] }>(
+      `/api/v1/market-analysis/contract/${contractId}`,
+      token,
+    ),
+
+  get: (token: string, analysisId: string) =>
+    apiFetch<MarketAnalysisDTO>(`/api/v1/market-analysis/${analysisId}`, token),
 }

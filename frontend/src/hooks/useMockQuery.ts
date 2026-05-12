@@ -2,7 +2,6 @@ import { useQuery } from '@tanstack/react-query'
 import { delay } from '@/lib/utils'
 import { mockDocuments } from '@/mocks/documents'
 import { mockClauseCategories } from '@/mocks/clauses'
-import { mockMarketClauses } from '@/mocks/marketData'
 import { mockObligations, getObligationStats } from '@/mocks/obligations'
 import { mockTimelineEvents } from '@/mocks/timeline'
 import { mockWorkflows } from '@/mocks/workflow'
@@ -34,16 +33,6 @@ export function useClauseCategoriesForDoc(_docId: string) {
     queryFn: async () => {
       await delay(500)
       return mockClauseCategories
-    },
-  })
-}
-
-export function useMarketClauses() {
-  return useQuery({
-    queryKey: ['market-clauses'],
-    queryFn: async () => {
-      await delay(450)
-      return mockMarketClauses
     },
   })
 }

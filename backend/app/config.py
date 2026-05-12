@@ -37,15 +37,15 @@ class Settings(BaseSettings):
     llm_provider: str = "gemini"
 
     # Max characters sent to the LLM per call (~4 chars per token, less for legal text)
-    # 60_000 chars ≈ 20,000–25,000 tokens; covers most contracts including buried date clauses
-    llm_max_chars: int = 60_000
+    # 300_000 chars ≈ 75,000 tokens; covers very large contracts including buried schedule text
+    llm_max_chars: int = 300_000
 
     # Higher limit for obligation extraction — obligations appear after long definitions sections
-    # 120_000 chars ≈ 40,000–50,000 tokens; safe for Gemini 2.5 Flash's 1M context window
-    obligations_max_chars: int = 120_000
+    # 300_000 chars ≈ 75,000 tokens; keeps long-form schedules and annexures in scope
+    obligations_max_chars: int = 300_000
 
     # Timeline generation — needs the full document to catch all milestones and payment dates
-    timeline_max_chars: int = 120_000
+    timeline_max_chars: int = 300_000
 
     # Max chunks embedded per document. Each chunk is ~800 chars.
     # 200 chunks covers ~160k chars (~120 pages) — enough for the largest legal contracts.

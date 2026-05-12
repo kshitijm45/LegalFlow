@@ -148,9 +148,9 @@ export function useCreateCollection() {
   const getToken = useToken()
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async ({ name, color }: { name: string; color?: string }) => {
+    mutationFn: async ({ name, color, parent_id }: { name: string; color?: string; parent_id?: string | null }) => {
       const token = await getToken()
-      return vaultApi.createCollection(token, name, color)
+      return vaultApi.createCollection(token, name, color, parent_id)
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['collections'] }),
   })
@@ -160,9 +160,13 @@ export function useUpdateCollection() {
   const getToken = useToken()
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async ({ id, name, color }: { id: string; name?: string; color?: string }) => {
+    mutationFn: async ({ id, name, color, parent_id }: { id: string; name?: string; color?: string; parent_id?: string | null }) => {
       const token = await getToken()
-      return vaultApi.updateCollection(token, id, { name, color })
+      const patch: { name?: string; color?: string; parent_id?: string | null } = {}
+      if (name !== undefined) patch.name = name
+      if (color !== undefined) patch.color = color
+      if (parent_id !== undefined) patch.parent_id = parent_id
+      return vaultApi.updateCollection(token, id, patch)
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['collections'] }),
   })

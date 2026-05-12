@@ -1,29 +1,15 @@
 import { useState } from 'react'
+import { Document, Packer, Paragraph, Table, TableRow, TableCell, TextRun, WidthType, AlignmentType, BorderStyle, HeadingLevel, ShadingType } from 'docx'
 import { Download, FileText, Loader2, Sparkles, Check, ChevronDown, ChevronUp, ArrowUpDown, RefreshCw } from 'lucide-react'
 import { Topbar } from '@/components/layout/Topbar'
 import { useContracts, formatFileSize } from '@/hooks/useVault'
 import { useGenerateTimeline } from '@/hooks/useTimeline'
 import type { TimelineEventDTO } from '@/hooks/useTimeline'
 
-type SortKey = 'date' | 'type' | 'status' | 'document'
+type SortKey = 'date' | 'document'
 type SortDir = 'asc' | 'desc'
 type StatusFilter = 'all' | 'overdue' | 'upcoming' | 'completed'
-type TypeFilter = 'all' | 'deadline' | 'payment' | 'renewal' | 'milestone' | 'review' | 'start'
 
-const typeConfig: Record<string, { label: string; color: string; bg: string }> = {
-  start:     { label: 'Start',     color: '#059669', bg: '#D1FAE5' },
-  milestone: { label: 'Milestone', color: '#4338CA', bg: '#EEF2FF' },
-  deadline:  { label: 'Deadline',  color: '#DC2626', bg: '#FEE2E2' },
-  renewal:   { label: 'Renewal',   color: '#D97706', bg: '#FEF3C7' },
-  payment:   { label: 'Payment',   color: '#059669', bg: '#D1FAE5' },
-  review:    { label: 'Review',    color: '#475569', bg: '#F1F5F9' },
-}
-
-const statusConfig: Record<string, { label: string; color: string; bg: string; dot: string }> = {
-  upcoming:  { label: 'Upcoming',  color: '#4338CA', bg: '#EEF2FF',  dot: '#4338CA' },
-  completed: { label: 'Completed', color: '#059669', bg: '#D1FAE5',  dot: '#059669' },
-  overdue:   { label: 'Overdue',   color: '#DC2626', bg: '#FEE2E2',  dot: '#DC2626' },
-}
 
 function getToday() {
   return new Date()
@@ -47,27 +33,79 @@ function formatEventDate(dateStr: string) {
   return parseLocalDate(dateStr).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
-function exportCSV(events: TimelineEventDTO[]) {
-  const headers = ['Date', 'Title', 'Type', 'Status', 'Document', 'Section', 'Amount', 'Description', 'Source Clause']
-  const rows = events.map((e) => [
-    e.date,
-    e.title,
-    e.type,
-    e.status,
-    e.documentName,
-    e.section ?? '',
-    e.amount ?? '',
-    e.description,
-    e.sourceClause ?? '',
-  ])
-  const csvContent = [headers, ...rows]
-    .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
-    .join('\n')
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+async function exportDocx(events: TimelineEventDTO[]) {
+  const COLS = ['Date', 'Event Title', 'Document', 'Description']
+  const COL_WIDTHS = [1400, 2200, 2200, 6200] // twips, total ~12000
+
+  const cellBorder = { style: BorderStyle.SINGLE, size: 4, color: 'E2E8F0' }
+  const borders = { top: cellBorder, bottom: cellBorder, left: cellBorder, right: cellBorder }
+
+  const headerRow = new TableRow({
+    tableHeader: true,
+    children: COLS.map((label, i) =>
+      new TableCell({
+        width: { size: COL_WIDTHS[i], type: WidthType.DXA },
+        shading: { type: ShadingType.SOLID, color: 'EEF2FF' },
+        borders,
+        children: [new Paragraph({
+          children: [new TextRun({ text: label, bold: true, size: 20, color: '4338CA', font: 'Calibri' })],
+          alignment: AlignmentType.LEFT,
+        })],
+      })
+    ),
+  })
+
+  const dataRows = events.map((e) => {
+    const cells = [
+      formatEventDate(e.date),
+      e.title,
+      e.documentName,
+      e.description,
+    ]
+    return new TableRow({
+      children: cells.map((text, i) =>
+        new TableCell({
+          width: { size: COL_WIDTHS[i], type: WidthType.DXA },
+          borders,
+          children: [new Paragraph({
+            children: [new TextRun({ text, size: 19, color: '0F172A', font: 'Calibri' })],
+            alignment: AlignmentType.LEFT,
+          })],
+        })
+      ),
+    })
+  })
+
+  const doc = new Document({
+    sections: [{
+      children: [
+        new Paragraph({
+          text: 'Contract Timeline',
+          heading: HeadingLevel.HEADING_1,
+          spacing: { after: 200 },
+        }),
+        new Paragraph({
+          children: [new TextRun({
+            text: `Generated ${new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} · ${events.length} events`,
+            size: 18,
+            color: '475569',
+            font: 'Calibri',
+          })],
+          spacing: { after: 320 },
+        }),
+        new Table({
+          width: { size: 100, type: WidthType.PERCENTAGE },
+          rows: [headerRow, ...dataRows],
+        }),
+      ],
+    }],
+  })
+
+  const blob = await Packer.toBlob(doc)
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `timeline-${new Date().toISOString().slice(0, 10)}.csv`
+  a.download = `timeline-${new Date().toISOString().slice(0, 10)}.docx`
   a.click()
   URL.revokeObjectURL(url)
 }
@@ -76,8 +114,6 @@ function exportCSV(events: TimelineEventDTO[]) {
 
 function EventRow({ event }: { event: TimelineEventDTO }) {
   const [expanded, setExpanded] = useState(false)
-  const cfg   = typeConfig[event.type]   ?? typeConfig.milestone
-  const scfg  = statusConfig[event.status] ?? statusConfig.upcoming
   const isPast = parseLocalDate(event.date) < getToday()
 
   return (
@@ -98,18 +134,8 @@ function EventRow({ event }: { event: TimelineEventDTO }) {
         <td className="px-5 py-3.5">
           <p className="text-[13px] font-semibold text-text">{event.title}</p>
           {event.amount && (
-            <p className="text-[11.5px] font-bold mt-0.5" style={{ color: cfg.color }}>{event.amount}</p>
+            <p className="text-[11.5px] font-bold mt-0.5 text-indigo">{event.amount}</p>
           )}
-        </td>
-
-        {/* Type */}
-        <td className="px-5 py-3.5">
-          <span
-            className="inline-flex px-2.5 py-[3px] rounded-[5px] text-[11.5px] font-semibold whitespace-nowrap"
-            style={{ background: cfg.bg, color: cfg.color }}
-          >
-            {cfg.label}
-          </span>
         </td>
 
         {/* Document */}
@@ -118,17 +144,6 @@ function EventRow({ event }: { event: TimelineEventDTO }) {
           {event.section && (
             <p className="text-[11px] text-text-3 mt-0.5 truncate">{event.section}</p>
           )}
-        </td>
-
-        {/* Status */}
-        <td className="px-5 py-3.5">
-          <span
-            className="inline-flex items-center gap-1.5 px-2.5 py-[3px] rounded-[5px] text-[11.5px] font-semibold whitespace-nowrap"
-            style={{ background: scfg.bg, color: scfg.color }}
-          >
-            <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: scfg.dot }} />
-            {scfg.label}
-          </span>
         </td>
 
         {/* Expand toggle */}
@@ -143,7 +158,7 @@ function EventRow({ event }: { event: TimelineEventDTO }) {
       {/* Expanded detail row */}
       {expanded && (
         <tr className="bg-[#F8FAFC] border-b border-border">
-          <td colSpan={6} className="px-5 py-4">
+          <td colSpan={4} className="px-5 py-4">
             <div className="flex gap-8">
               <div className="flex-1 min-w-0">
                 <p className="text-[10px] font-bold text-text-3 uppercase tracking-[0.6px] mb-1.5">Description</p>
@@ -201,7 +216,6 @@ export function TimelinePage() {
   const [sortKey, setSortKey]           = useState<SortKey>('date')
   const [sortDir, setSortDir]           = useState<SortDir>('asc')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
-  const [typeFilter, setTypeFilter]     = useState<TypeFilter>('all')
 
   const generateTimeline = useGenerateTimeline()
 
@@ -219,7 +233,6 @@ export function TimelinePage() {
     setEvents([])
     setHasGenerated(false)
     setStatusFilter('all')
-    setTypeFilter('all')
     generateTimeline.mutate({ contractIds: [...selectedIds] }, {
       onSuccess: (d) => {
         setEvents(d.events)
@@ -233,7 +246,6 @@ export function TimelinePage() {
     setEvents([])
     setHasGenerated(false)
     setStatusFilter('all')
-    setTypeFilter('all')
     generateTimeline.mutate({ contractIds: [...selectedIds], forceRegenerate: true }, {
       onSuccess: (d) => {
         setEvents(d.events)
@@ -260,12 +272,9 @@ export function TimelinePage() {
 
   const sorted = [...events]
     .filter((e) => statusFilter === 'all' || e.status === statusFilter)
-    .filter((e) => typeFilter === 'all' || e.type === typeFilter)
     .sort((a, b) => {
       let cmp = 0
       if (sortKey === 'date')     cmp = new Date(a.date).getTime() - new Date(b.date).getTime()
-      if (sortKey === 'type')     cmp = a.type.localeCompare(b.type)
-      if (sortKey === 'status')   cmp = a.status.localeCompare(b.status)
       if (sortKey === 'document') cmp = a.documentName.localeCompare(b.documentName)
       return sortDir === 'asc' ? cmp : -cmp
     })
@@ -273,16 +282,6 @@ export function TimelinePage() {
   const overdue   = events.filter((e) => e.status === 'overdue').length
   const upcoming  = events.filter((e) => e.status === 'upcoming').length
   const completed = events.filter((e) => e.status === 'completed').length
-
-  const typeFilters: { key: TypeFilter; label: string }[] = [
-    { key: 'all',       label: 'All Types' },
-    { key: 'deadline',  label: 'Deadline' },
-    { key: 'payment',   label: 'Payment' },
-    { key: 'renewal',   label: 'Renewal' },
-    { key: 'milestone', label: 'Milestone' },
-    { key: 'review',    label: 'Review' },
-    { key: 'start',     label: 'Start' },
-  ]
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
@@ -303,9 +302,9 @@ export function TimelinePage() {
             <button
               className="flex items-center gap-1.5 px-3 py-[7px] text-[13px] font-medium text-text-2 border border-border-dk rounded-[7px] bg-white hover:bg-[#F8FAFC] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               disabled={events.length === 0}
-              onClick={() => exportCSV(events)}
+              onClick={() => exportDocx(events)}
             >
-              <Download size={13} /> Export CSV
+              <Download size={13} /> Export Word
             </button>
           </div>
         }
@@ -384,66 +383,39 @@ export function TimelinePage() {
 
       {pickerOpen && <div className="fixed inset-0 z-10" onClick={() => setPickerOpen(false)} />}
 
-      {/* Summary chips + type filter (shown after generation) */}
+      {/* Summary chips (shown after generation) */}
       {hasGenerated && events.length > 0 && (
-        <div className="flex items-center justify-between px-7 mb-3 flex-shrink-0 flex-wrap gap-2">
-          {/* Status filter chips */}
-          <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 px-7 mb-3 flex-shrink-0 flex-wrap">
+          <button
+            className={`inline-flex items-center gap-1.5 px-3 py-[5px] rounded-[100px] text-[12px] font-semibold border transition-colors ${statusFilter === 'all' ? 'bg-[#0F172A] text-white border-[#0F172A]' : 'bg-white text-text-2 border-border hover:border-border-dk'}`}
+            onClick={() => setStatusFilter('all')}
+          >
+            {events.length} events
+          </button>
+          {overdue > 0 && (
             <button
-              className={`inline-flex items-center gap-1.5 px-3 py-[5px] rounded-[100px] text-[12px] font-semibold border transition-colors ${statusFilter === 'all' ? 'bg-[#0F172A] text-white border-[#0F172A]' : 'bg-white text-text-2 border-border hover:border-border-dk'}`}
-              onClick={() => setStatusFilter('all')}
+              className={`inline-flex items-center gap-1.5 px-3 py-[5px] rounded-[100px] text-[12px] font-semibold border transition-colors ${statusFilter === 'overdue' ? 'bg-danger text-white border-danger' : 'bg-white text-danger border-danger/30 hover:border-danger/60'}`}
+              onClick={() => toggleStatusFilter('overdue')}
             >
-              {events.length} events
+              <span className="w-1.5 h-1.5 rounded-full bg-current" />{overdue} overdue
             </button>
-            {overdue > 0 && (
-              <button
-                className={`inline-flex items-center gap-1.5 px-3 py-[5px] rounded-[100px] text-[12px] font-semibold border transition-colors ${statusFilter === 'overdue' ? 'bg-danger text-white border-danger' : 'bg-white text-danger border-danger/30 hover:border-danger/60'}`}
-                onClick={() => toggleStatusFilter('overdue')}
-              >
-                <span className="w-1.5 h-1.5 rounded-full bg-current" />{overdue} overdue
-              </button>
-            )}
-            {upcoming > 0 && (
-              <button
-                className={`inline-flex items-center gap-1.5 px-3 py-[5px] rounded-[100px] text-[12px] font-semibold border transition-colors ${statusFilter === 'upcoming' ? 'bg-indigo text-white border-indigo' : 'bg-white text-indigo border-indigo/30 hover:border-indigo/60'}`}
-                onClick={() => toggleStatusFilter('upcoming')}
-              >
-                <span className="w-1.5 h-1.5 rounded-full bg-current" />{upcoming} upcoming
-              </button>
-            )}
-            {completed > 0 && (
-              <button
-                className={`inline-flex items-center gap-1.5 px-3 py-[5px] rounded-[100px] text-[12px] font-semibold border transition-colors ${statusFilter === 'completed' ? 'bg-success text-white border-success' : 'bg-white text-success border-success/30 hover:border-success/60'}`}
-                onClick={() => toggleStatusFilter('completed')}
-              >
-                <span className="w-1.5 h-1.5 rounded-full bg-current" />{completed} completed
-              </button>
-            )}
-          </div>
-
-          {/* Type filter chips */}
-          <div className="flex items-center gap-1.5 flex-wrap">
-            {typeFilters.map(({ key, label }) => {
-              const cfg = key !== 'all' ? typeConfig[key] : null
-              const isActive = typeFilter === key
-              return (
-                <button
-                  key={key}
-                  className={`px-2.5 py-[4px] rounded-[5px] text-[11.5px] font-semibold border transition-colors ${
-                    isActive
-                      ? cfg
-                        ? ''
-                        : 'bg-[#0F172A] text-white border-[#0F172A]'
-                      : 'bg-white text-text-3 border-border hover:border-border-dk hover:text-text-2'
-                  }`}
-                  style={isActive && cfg ? { background: cfg.bg, color: cfg.color, borderColor: cfg.color + '40' } : undefined}
-                  onClick={() => setTypeFilter((prev) => (prev === key ? 'all' : key))}
-                >
-                  {label}
-                </button>
-              )
-            })}
-          </div>
+          )}
+          {upcoming > 0 && (
+            <button
+              className={`inline-flex items-center gap-1.5 px-3 py-[5px] rounded-[100px] text-[12px] font-semibold border transition-colors ${statusFilter === 'upcoming' ? 'bg-indigo text-white border-indigo' : 'bg-white text-indigo border-indigo/30 hover:border-indigo/60'}`}
+              onClick={() => toggleStatusFilter('upcoming')}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-current" />{upcoming} upcoming
+            </button>
+          )}
+          {completed > 0 && (
+            <button
+              className={`inline-flex items-center gap-1.5 px-3 py-[5px] rounded-[100px] text-[12px] font-semibold border transition-colors ${statusFilter === 'completed' ? 'bg-success text-white border-success' : 'bg-white text-success border-success/30 hover:border-success/60'}`}
+              onClick={() => toggleStatusFilter('completed')}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-current" />{completed} completed
+            </button>
+          )}
         </div>
       )}
 
@@ -471,7 +443,7 @@ export function TimelinePage() {
             <p className="text-[14px] font-semibold text-text-2">No events match the current filters</p>
             <button
               className="text-[13px] text-indigo underline underline-offset-2"
-              onClick={() => { setStatusFilter('all'); setTypeFilter('all') }}
+              onClick={() => setStatusFilter('all')}
             >
               Clear filters
             </button>
@@ -482,9 +454,7 @@ export function TimelinePage() {
               <tr>
                 <SortTh label="Date"     sortKey="date"     active={sortKey === 'date'}     dir={sortDir} onSort={handleSort} />
                 <th className="px-5 py-3 text-left text-[11px] font-bold text-text-3 uppercase tracking-[0.6px]">Event</th>
-                <SortTh label="Type"     sortKey="type"     active={sortKey === 'type'}     dir={sortDir} onSort={handleSort} />
                 <SortTh label="Document" sortKey="document" active={sortKey === 'document'} dir={sortDir} onSort={handleSort} />
-                <SortTh label="Status"   sortKey="status"   active={sortKey === 'status'}   dir={sortDir} onSort={handleSort} />
                 <th className="px-5 py-3 w-10" />
               </tr>
             </thead>

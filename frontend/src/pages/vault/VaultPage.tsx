@@ -1,9 +1,9 @@
-import { useState, useRef, useCallback, useEffect } from 'react'
+import React, { useState, useRef, useCallback, useEffect } from 'react'
 import Markdown from 'react-markdown'
 import {
   Search, Plus, X, Download, Folder, FileText, Sparkles, Loader2,
-  Trash2, FolderInput, Pencil, Check, ChevronDown, MessageSquare,
-  Send, MoreHorizontal, Eye, SlidersHorizontal, ChevronLeft, ChevronRight,
+  Trash2, FolderInput, Pencil, Check, ChevronDown, ChevronRight, MessageSquare,
+  Send, MoreHorizontal, Eye, SlidersHorizontal, ChevronLeft,
   AlertTriangle,
 } from 'lucide-react'
 import { Topbar } from '@/components/layout/Topbar'
@@ -188,7 +188,7 @@ function ChatPanel({
   const [messages, setMessages] = useState<ChatMsg[]>([])
   const [input, setInput] = useState('')
   const [scopeIds, setScopeIds] = useState<Set<string>>(
-    selectedIds.size > 0 ? new Set(selectedIds) : new Set(contracts.filter(c => c.status === 'ready').map(c => c.id))
+    selectedIds.size > 0 ? new Set(selectedIds) : new Set()
   )
   const [scopeOpen, setScopeOpen] = useState(false)
   const chatMutation = useVaultChat()
@@ -385,13 +385,26 @@ function ContractDetail({
   onDelete: (id: string) => void
   onView: (c: ContractDTO) => void
   onMoveToCollection: (id: string, collId: string | null) => void
-  collections: CollectionDTO[]
+  collections: CollectionDTO[]  // flat list — tree built internally
 }) {
   const downloadMutation = useDownloadContract()
   const renameMutation = useRenameContract()
   const [editing, setEditing] = useState(false)
   const [editName, setEditName] = useState(contract.name)
   const [moveOpen, setMoveOpen] = useState(false)
+
+  const renderMoveNode = (node: CollectionNode, depth: number): React.ReactNode => (
+    <React.Fragment key={node.id}>
+      <button onClick={() => { onMoveToCollection(contract.id, node.id); setMoveOpen(false) }}
+        className="w-full text-left flex items-center gap-1.5 py-2 text-[12px] text-text-2 hover:bg-surface transition-colors"
+        style={{ paddingLeft: depth === 0 ? 12 : 12 + depth * 14 }}>
+        {depth > 0 && <span className="text-text-3 flex-shrink-0 text-[10px] leading-none">↳</span>}
+        <Folder size={11} className="flex-shrink-0" style={{ color: node.color }} />
+        <span className={depth === 0 ? 'font-medium' : ''}>{node.name}</span>
+      </button>
+      {node.children.map(child => renderMoveNode(child, depth + 1))}
+    </React.Fragment>
+  )
 
   const st = typeBadgeStyle(contract.contract_type)
   const badge = expiryBadge(contract.expiry_date)
@@ -494,18 +507,12 @@ function ContractDetail({
             <FolderInput size={13} />Move to collection
           </button>
           {moveOpen && (
-            <div className="absolute bottom-full left-0 right-0 mb-1 bg-white border border-border rounded-[8px] shadow-lg py-1 z-20">
+            <div className="absolute bottom-full left-0 right-0 mb-1 bg-white border border-border rounded-[8px] shadow-lg py-1 z-20 max-h-[200px] overflow-y-auto">
               <button onClick={() => { onMoveToCollection(contract.id, null); setMoveOpen(false) }}
                 className="w-full text-left px-3 py-2 text-[12px] text-text-2 hover:bg-surface transition-colors">
-                No collection
+                No folder
               </button>
-              {collections.map(c => (
-                <button key={c.id} onClick={() => { onMoveToCollection(contract.id, c.id); setMoveOpen(false) }}
-                  className="w-full text-left flex items-center gap-2 px-3 py-2 text-[12px] text-text-2 hover:bg-surface transition-colors">
-                  <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: c.color }} />
-                  {c.name}
-                </button>
-              ))}
+              {buildTree(collections).map(node => renderMoveNode(node, 0))}
             </div>
           )}
         </div>
@@ -538,72 +545,151 @@ function SidebarItem({ label, count, icon, active, onClick }: {
   )
 }
 
-function CollectionItem({ coll, active, onClick, onRename, onRecolor, onDelete }: {
-  coll: CollectionDTO; active: boolean; onClick: () => void
+type CollectionNode = CollectionDTO & { children: CollectionNode[] }
+
+function buildTree(collections: CollectionDTO[]): CollectionNode[] {
+  const map = new Map<string, CollectionNode>()
+  collections.forEach(c => map.set(c.id, { ...c, children: [] }))
+  const roots: CollectionNode[] = []
+  map.forEach(node => {
+    if (node.parent_id && map.has(node.parent_id)) {
+      map.get(node.parent_id)!.children.push(node)
+    } else {
+      roots.push(node)
+    }
+  })
+  return roots
+}
+
+function CollectionItem({ coll, depth, activeCollection, onSelect, onRename, onRecolor, onDelete, onAddSubfolder, onMakeTopLevel }: {
+  coll: CollectionNode
+  depth: number
+  activeCollection: string
+  onSelect: (id: string) => void
   onRename: (id: string, name: string) => void
   onRecolor: (id: string, color: string) => void
   onDelete: (id: string) => void
+  onAddSubfolder: (parentId: string) => void
+  onMakeTopLevel: (id: string) => void
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [editing, setEditing] = useState(false)
   const [editName, setEditName] = useState(coll.name)
   const [showColors, setShowColors] = useState(false)
+  const [expanded, setExpanded] = useState(true)
+
+  const active = activeCollection === coll.id
+  const hasChildren = coll.children.length > 0
+  const indentPx = 8 + depth * 14
 
   return (
-    <div className={cn('flex items-center gap-2 px-2 py-1.5 rounded-[6px] cursor-pointer text-[13px] font-medium transition-colors group relative',
-      active ? 'bg-indigo-lt text-indigo' : 'text-text-2 hover:bg-border')}
-      onClick={onClick}>
-      <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: coll.color }} />
-
-      {editing ? (
-        <input autoFocus value={editName}
-          onChange={(e) => setEditName(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') { onRename(coll.id, editName); setEditing(false) }
-            if (e.key === 'Escape') setEditing(false)
-          }}
-          onBlur={() => { onRename(coll.id, editName); setEditing(false) }}
-          onClick={(e) => e.stopPropagation()}
-          className="flex-1 min-w-0 text-[12.5px] font-medium text-text bg-white border border-indigo rounded-[4px] px-1.5 py-0.5 outline-none" />
-      ) : (
-        <span className="truncate flex-1">{coll.name}</span>
-      )}
-
-      <button
-        onClick={(e) => { e.stopPropagation(); setMenuOpen(o => !o) }}
-        className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded-[4px] hover:bg-black/10 text-text-3 flex-shrink-0"
+    <div>
+      <div
+        className={cn('flex items-center gap-1 py-1.5 rounded-[6px] cursor-pointer text-[12.5px] font-medium transition-colors group relative select-none',
+          active ? 'bg-indigo-lt text-indigo' : 'text-text-2 hover:bg-border')}
+        style={{ paddingLeft: indentPx }}
+        onClick={() => onSelect(coll.id)}
       >
-        <MoreHorizontal size={12} />
-      </button>
+        {/* Expand / collapse chevron */}
+        <button
+          className={cn('w-4 h-4 flex items-center justify-center flex-shrink-0 rounded-[3px] transition-colors',
+            hasChildren ? 'text-text-3 hover:text-text-2 hover:bg-black/5' : 'opacity-0 pointer-events-none')}
+          onClick={e => { e.stopPropagation(); setExpanded(v => !v) }}
+        >
+          {expanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+        </button>
 
-      {menuOpen && (
-        <>
-          <div className="fixed inset-0 z-10" onClick={(e) => { e.stopPropagation(); setMenuOpen(false); setShowColors(false) }} />
-          <div className="absolute top-full mt-1 right-0 w-[160px] bg-white border border-border rounded-[8px] shadow-lg py-1 z-20" onClick={(e) => e.stopPropagation()}>
-            <button onClick={() => { setEditing(true); setMenuOpen(false) }}
-              className="w-full text-left flex items-center gap-2 px-3 py-2 text-[12px] text-text-2 hover:bg-surface transition-colors">
-              <Pencil size={11} />Rename
-            </button>
-            <button onClick={() => setShowColors(o => !o)}
-              className="w-full text-left flex items-center gap-2 px-3 py-2 text-[12px] text-text-2 hover:bg-surface transition-colors">
-              <span className="w-3 h-3 rounded-full" style={{ background: coll.color }} />Change colour
-            </button>
-            {showColors && (
-              <div className="flex flex-wrap gap-1.5 px-3 pb-2">
-                {COLLECTION_COLORS.map(c => (
-                  <button key={c} onClick={() => { onRecolor(coll.id, c); setMenuOpen(false); setShowColors(false) }}
-                    className="w-4 h-4 rounded-full hover:scale-110 transition-transform"
-                    style={{ background: c }} />
-                ))}
-              </div>
-            )}
-            <div className="h-px bg-border mx-2 my-1" />
-            <button onClick={() => { onDelete(coll.id); setMenuOpen(false) }}
-              className="w-full text-left flex items-center gap-2 px-3 py-2 text-[12px] text-danger hover:bg-danger-lt transition-colors">
-              <Trash2 size={11} />Delete
-            </button>
-          </div>
-        </>
+        {/* Folder icon with collection color */}
+        <Folder 
+          size={13} 
+          className="flex-shrink-0" 
+          style={{ color: active ? '#4338CA' : coll.color }} 
+        />
+
+        {editing ? (
+          <input
+            autoFocus
+            value={editName}
+            onChange={e => setEditName(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter') { onRename(coll.id, editName); setEditing(false) }
+              if (e.key === 'Escape') setEditing(false)
+            }}
+            onBlur={() => { onRename(coll.id, editName); setEditing(false) }}
+            onClick={e => e.stopPropagation()}
+            className="flex-1 min-w-0 text-[12px] font-medium text-text bg-white border border-indigo rounded-[4px] px-1.5 py-0.5 outline-none"
+          />
+        ) : (
+          <span className="truncate flex-1 ml-1">{coll.name}</span>
+        )}
+
+        <button
+          onClick={e => { e.stopPropagation(); setMenuOpen(o => !o) }}
+          className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded-[4px] hover:bg-black/10 text-text-3 flex-shrink-0 mr-1"
+        >
+          <MoreHorizontal size={12} />
+        </button>
+
+        {menuOpen && (
+          <>
+            <div className="fixed inset-0 z-10" onClick={e => { e.stopPropagation(); setMenuOpen(false); setShowColors(false) }} />
+            <div className="absolute top-full mt-1 right-1 w-[170px] bg-white border border-border rounded-[8px] shadow-lg py-1 z-20" onClick={e => e.stopPropagation()}>
+              <button onClick={() => { onAddSubfolder(coll.id); setMenuOpen(false) }}
+                className="w-full text-left flex items-center gap-2 px-3 py-2 text-[12px] text-text-2 hover:bg-surface transition-colors">
+                <FolderInput size={11} />New subfolder
+              </button>
+              {coll.parent_id && (
+                <button onClick={() => { onMakeTopLevel(coll.id); setMenuOpen(false) }}
+                  className="w-full text-left flex items-center gap-2 px-3 py-2 text-[12px] text-text-2 hover:bg-surface transition-colors">
+                  <ChevronLeft size={11} />Make top-level
+                </button>
+              )}
+              <div className="h-px bg-border mx-2 my-1" />
+              <button onClick={() => { setEditing(true); setMenuOpen(false) }}
+                className="w-full text-left flex items-center gap-2 px-3 py-2 text-[12px] text-text-2 hover:bg-surface transition-colors">
+                <Pencil size={11} />Rename
+              </button>
+              <button onClick={() => setShowColors(o => !o)}
+                className="w-full text-left flex items-center gap-2 px-3 py-2 text-[12px] text-text-2 hover:bg-surface transition-colors">
+                <span className="w-3 h-3 rounded-full" style={{ background: coll.color }} />Change colour
+              </button>
+              {showColors && (
+                <div className="flex flex-wrap gap-1.5 px-3 pb-2">
+                  {COLLECTION_COLORS.map(c => (
+                    <button key={c} onClick={() => { onRecolor(coll.id, c); setMenuOpen(false); setShowColors(false) }}
+                      className="w-4 h-4 rounded-full hover:scale-110 transition-transform"
+                      style={{ background: c }} />
+                  ))}
+                </div>
+              )}
+              <div className="h-px bg-border mx-2 my-1" />
+              <button onClick={() => { onDelete(coll.id); setMenuOpen(false) }}
+                className="w-full text-left flex items-center gap-2 px-3 py-2 text-[12px] text-danger hover:bg-danger-lt transition-colors">
+                <Trash2 size={11} />Delete
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Children */}
+      {hasChildren && expanded && (
+        <div>
+          {coll.children.map(child => (
+            <CollectionItem
+              key={child.id}
+              coll={child}
+              depth={depth + 1}
+              activeCollection={activeCollection}
+              onSelect={onSelect}
+              onRename={onRename}
+              onRecolor={onRecolor}
+              onDelete={onDelete}
+              onAddSubfolder={onAddSubfolder}
+              onMakeTopLevel={onMakeTopLevel}
+            />
+          ))}
+        </div>
       )}
     </div>
   )
@@ -620,6 +706,19 @@ function BulkToolbar({ count, collections, onBulkDelete, onBulkMove, onClear }: 
 }) {
   const [moveOpen, setMoveOpen] = useState(false)
 
+  const renderBulkNode = (node: CollectionNode, depth: number): React.ReactNode => (
+    <React.Fragment key={node.id}>
+      <button onClick={() => { onBulkMove(node.id); setMoveOpen(false) }}
+        className="w-full text-left flex items-center gap-1.5 py-2 text-[12px] text-text-2 hover:bg-surface transition-colors"
+        style={{ paddingLeft: depth === 0 ? 12 : 12 + depth * 14 }}>
+        {depth > 0 && <span className="text-text-3 flex-shrink-0 text-[10px] leading-none">↳</span>}
+        <Folder size={11} className="flex-shrink-0" style={{ color: node.color }} />
+        <span className={depth === 0 ? 'font-medium' : ''}>{node.name}</span>
+      </button>
+      {node.children.map(child => renderBulkNode(child, depth + 1))}
+    </React.Fragment>
+  )
+
   return (
     <div className="flex items-center gap-3 px-6 py-2.5 bg-indigo-lt border-b border-indigo-mid flex-shrink-0">
       <span className="text-[12.5px] font-semibold text-indigo">{count} selected</span>
@@ -633,18 +732,12 @@ function BulkToolbar({ count, collections, onBulkDelete, onBulkMove, onClear }: 
         {moveOpen && (
           <>
             <div className="fixed inset-0 z-10" onClick={() => setMoveOpen(false)} />
-            <div className="absolute top-full right-0 mt-1 w-[180px] bg-white border border-border rounded-[8px] shadow-lg py-1 z-20">
+            <div className="absolute top-full right-0 mt-1 w-[180px] bg-white border border-border rounded-[8px] shadow-lg py-1 z-20 max-h-[200px] overflow-y-auto">
               <button onClick={() => { onBulkMove(null); setMoveOpen(false) }}
                 className="w-full text-left px-3 py-2 text-[12px] text-text-2 hover:bg-surface transition-colors">
-                No collection
+                No folder
               </button>
-              {collections.map(c => (
-                <button key={c.id} onClick={() => { onBulkMove(c.id); setMoveOpen(false) }}
-                  className="w-full text-left flex items-center gap-2 px-3 py-2 text-[12px] text-text-2 hover:bg-surface transition-colors">
-                  <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: c.color }} />
-                  {c.name}
-                </button>
-              ))}
+              {buildTree(collections).map(node => renderBulkNode(node, 0))}
             </div>
           </>
         )}
@@ -808,6 +901,7 @@ export function VaultPage() {
   const [showNewColl, setShowNewColl]   = useState(false)
   const [newCollName, setNewCollName]   = useState('')
   const [newCollColor, setNewCollColor] = useState(COLLECTION_COLORS[0])
+  const [newCollParentId, setNewCollParentId] = useState<string | null>(null)
   const fileInputRef   = useRef<HTMLInputElement>(null)
   const newCollInputRef = useRef<HTMLInputElement>(null)
 
@@ -937,9 +1031,17 @@ export function VaultPage() {
   function handleCreateCollection(e: React.FormEvent) {
     e.preventDefault()
     if (!newCollName.trim()) return
-    createCollMutation.mutate({ name: newCollName.trim(), color: newCollColor }, {
-      onSuccess: () => { setNewCollName(''); setShowNewColl(false) },
+    createCollMutation.mutate({ name: newCollName.trim(), color: newCollColor, parent_id: newCollParentId }, {
+      onSuccess: () => { setNewCollName(''); setShowNewColl(false); setNewCollParentId(null) },
     })
+  }
+
+  function handleAddSubfolder(parentId: string) {
+    setNewCollParentId(parentId)
+    setNewCollName('')
+    setNewCollColor(COLLECTION_COLORS[0])
+    setShowNewColl(true)
+    setTimeout(() => newCollInputRef.current?.focus(), 0)
   }
 
   useEffect(() => { if (showNewColl) newCollInputRef.current?.focus() }, [showNewColl])
@@ -1011,18 +1113,21 @@ export function VaultPage() {
         <div className="w-[220px] flex-shrink-0 border-r border-border bg-surface flex flex-col overflow-y-auto">
           <div className="flex items-center justify-between px-4 py-3.5">
             <span className="text-[11px] font-bold text-text-3 uppercase tracking-wider">Collections</span>
-            <button onClick={() => setShowNewColl(v => !v)}
+            <button onClick={() => { setNewCollParentId(null); setShowNewColl(v => !v) }}
               className="w-5 h-5 rounded-[5px] border border-border-dk flex items-center justify-center text-text-3 hover:bg-border hover:text-text-2 transition-colors">
               <Plus size={10} />
             </button>
           </div>
 
-          <div className="px-2 pb-4 space-y-0.5">
+          <div className="px-2 pb-4">
             {showNewColl && (
-              <form onSubmit={handleCreateCollection} className="px-2 mb-2">
+              <form onSubmit={handleCreateCollection} className="px-1 mb-2 pt-1">
+                <p className="text-[10px] font-semibold text-text-3 uppercase tracking-wider mb-1.5">
+                  {newCollParentId ? `New subfolder in "${collections.find(c => c.id === newCollParentId)?.name ?? '…'}"` : 'New collection'}
+                </p>
                 <input ref={newCollInputRef} value={newCollName} onChange={(e) => setNewCollName(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Escape' && setShowNewColl(false)}
-                  placeholder="Collection name…"
+                  onKeyDown={(e) => { if (e.key === 'Escape') { setShowNewColl(false); setNewCollParentId(null) } }}
+                  placeholder="Folder name…"
                   className="w-full text-xs px-2.5 py-1.5 border border-indigo rounded-[6px] outline-none bg-white text-text mb-1.5" />
                 <div className="flex gap-1 mb-1.5 flex-wrap">
                   {COLLECTION_COLORS.map(c => (
@@ -1036,7 +1141,7 @@ export function VaultPage() {
                     className="flex-1 text-[11px] font-semibold py-1 bg-indigo text-white rounded-[5px] hover:bg-indigo-dk transition-colors">
                     {createCollMutation.isPending ? '…' : 'Create'}
                   </button>
-                  <button type="button" onClick={() => setShowNewColl(false)}
+                  <button type="button" onClick={() => { setShowNewColl(false); setNewCollParentId(null) }}
                     className="px-2 py-1 text-[11px] text-text-2 border border-border rounded-[5px] hover:bg-border transition-colors">
                     Cancel
                   </button>
@@ -1044,34 +1149,44 @@ export function VaultPage() {
               </form>
             )}
 
-            <SidebarItem label="All Documents" count={sidebarData?.total ?? 0} icon={<Folder size={13} />}
-              active={activeCollection === 'all'} onClick={() => { setActiveCollection('all'); setPage(1) }} />
+            <div className="space-y-0.5">
+              <SidebarItem label="All Documents" count={sidebarData?.total ?? 0} icon={<Folder size={13} />}
+                active={activeCollection === 'all'} onClick={() => { setActiveCollection('all'); setPage(1) }} />
 
-            {collections.length > 0 && (
-              <>
-                <p className="text-[10px] font-bold text-text-3 uppercase tracking-wider px-2 pt-3 pb-1">My Collections</p>
-                {collections.map(c => (
-                  <CollectionItem key={c.id} coll={c}
-                    active={activeCollection === c.id}
-                    onClick={() => { setActiveCollection(c.id); setPage(1) }}
-                    onRename={(id, name) => updateCollMutation.mutate({ id, name })}
-                    onRecolor={(id, color) => updateCollMutation.mutate({ id, color })}
-                    onDelete={(id) => { deleteCollMutation.mutate(id); if (activeCollection === id) { setActiveCollection('all'); setPage(1) } }}
-                  />
-                ))}
-              </>
-            )}
+              {collections.length > 0 && (
+                <>
+                  <p className="text-[10px] font-bold text-text-3 uppercase tracking-wider px-2 pt-3 pb-1">My Folders</p>
+                  {buildTree(collections).map(node => (
+                    <CollectionItem
+                      key={node.id}
+                      coll={node}
+                      depth={0}
+                      activeCollection={activeCollection}
+                      onSelect={(id) => { setActiveCollection(id); setPage(1) }}
+                      onRename={(id, name) => updateCollMutation.mutate({ id, name })}
+                      onRecolor={(id, color) => updateCollMutation.mutate({ id, color })}
+                      onDelete={(id) => {
+                        deleteCollMutation.mutate(id)
+                        if (activeCollection === id) { setActiveCollection('all'); setPage(1) }
+                      }}
+                      onAddSubfolder={handleAddSubfolder}
+                      onMakeTopLevel={(id) => updateCollMutation.mutate({ id, parent_id: null })}
+                    />
+                  ))}
+                </>
+              )}
 
-            {Object.keys(typeGroups).length > 0 && (
-              <>
-                <p className="text-[10px] font-bold text-text-3 uppercase tracking-wider px-2 pt-3 pb-1">By Type</p>
-                {Object.entries(typeGroups).sort((a, b) => b[1] - a[1]).map(([type, count]) => (
-                  <SidebarItem key={type} label={type} count={count} icon={<FileText size={13} />}
-                    active={activeCollection === `type:${type}`}
-                    onClick={() => { setActiveCollection(`type:${type}`); setPage(1) }} />
-                ))}
-              </>
-            )}
+              {Object.keys(typeGroups).length > 0 && (
+                <>
+                  <p className="text-[10px] font-bold text-text-3 uppercase tracking-wider px-2 pt-3 pb-1">By Type</p>
+                  {Object.entries(typeGroups).sort((a, b) => b[1] - a[1]).map(([type, count]) => (
+                    <SidebarItem key={type} label={type} count={count} icon={<FileText size={13} />}
+                      active={activeCollection === `type:${type}`}
+                      onClick={() => { setActiveCollection(`type:${type}`); setPage(1) }} />
+                  ))}
+                </>
+              )}
+            </div>
           </div>
         </div>
 

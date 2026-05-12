@@ -431,6 +431,7 @@ async def bulk_delete_contracts(
 class CollectionCreate(BaseModel):
     name: str
     color: str = "#4338CA"
+    parent_id: Optional[str] = None
 
 
 @router.get("/collections")
@@ -451,7 +452,7 @@ async def list_collections(
     collections = result.scalars().all()
     return {
         "collections": [
-            {"id": str(c.id), "name": c.name, "color": c.color, "created_at": c.created_at.isoformat()}
+            {"id": str(c.id), "name": c.name, "color": c.color, "parent_id": str(c.parent_id) if c.parent_id else None, "created_at": c.created_at.isoformat()}
             for c in collections
         ]
     }
@@ -466,21 +467,30 @@ async def create_collection(
     user = await _get_user(claims, db)
     org_id = user.memberships[0].org_id if user.memberships else None
 
+    parent_id = None
+    if body.parent_id:
+        try:
+            parent_id = uuid.UUID(body.parent_id)
+        except (ValueError, AttributeError):
+            raise HTTPException(status_code=400, detail="Invalid parent_id")
+    
     coll = Collection(
         org_id=org_id,
         created_by=user.id,
+        parent_id=parent_id,
         name=body.name,
         color=body.color,
     )
     db.add(coll)
     await db.commit()
     await db.refresh(coll)
-    return {"id": str(coll.id), "name": coll.name, "color": coll.color, "created_at": coll.created_at.isoformat()}
+    return {"id": str(coll.id), "name": coll.name, "color": coll.color, "parent_id": str(parent_id) if parent_id else None, "created_at": coll.created_at.isoformat()}
 
 
 class CollectionUpdate(BaseModel):
     name: Optional[str] = None
     color: Optional[str] = None
+    parent_id: Optional[str] = None  # null clears parent (makes top-level); omit to leave unchanged
 
 
 @router.patch("/collections/{collection_id}")
@@ -507,9 +517,17 @@ async def update_collection(
         coll.name = body.name.strip()
     if body.color is not None:
         coll.color = body.color
+    if "parent_id" in body.model_fields_set:
+        if body.parent_id:
+            try:
+                coll.parent_id = uuid.UUID(body.parent_id)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid parent_id")
+        else:
+            coll.parent_id = None
 
     await db.commit()
-    return {"id": str(coll.id), "name": coll.name, "color": coll.color}
+    return {"id": str(coll.id), "name": coll.name, "color": coll.color, "parent_id": str(coll.parent_id) if coll.parent_id else None}
 
 
 @router.delete("/collections/{collection_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -774,10 +792,17 @@ async def chat_with_contracts(
         raise HTTPException(status_code=400, detail="No valid contracts selected")
 
     system = (
-        "You are a legal AI assistant helping analyse contracts. "
-        "Answer questions using ONLY the contract content provided below. "
-        "Be precise, structured, and cite the specific contract by name when relevant. "
-        "If the information is not present, say so clearly — do not hallucinate."
+        "You are a senior legal AI assistant specialised in contract analysis for law firms and corporate legal teams. "
+        "You help associates and partners quickly extract, compare, and reason over contract provisions.\n\n"
+        "Rules:\n"
+        "1. Answer using ONLY the contract content provided — never infer, speculate, or hallucinate.\n"
+        "2. Cite by contract name and clause/section whenever possible "
+        "(e.g. 'Under the ServicesCo MSA, Section 12.1 states…').\n"
+        "3. When comparing multiple contracts, address each contract's position separately before synthesising.\n"
+        "4. Quote key provisions verbatim when the exact wording is legally material.\n"
+        "5. Flag ambiguities, gaps, or missing information explicitly — never fill gaps with assumptions.\n"
+        "6. Use structured output (bullet lists, numbered steps, or short headers) for multi-part answers.\n"
+        "7. If a question falls entirely outside the provided contract content, say so directly."
     )
 
     history_text = ""
@@ -805,14 +830,14 @@ async def chat_with_contracts(
             if contract.summary:
                 meta_lines.append(f"Summary: {contract.summary}")
 
-            body_text = contract.full_text[:150_000]
+            body_text = contract.full_text[:300_000]
             context = "\n".join(meta_lines) + "\n\n--- FULL CONTRACT TEXT ---\n\n" + body_text
             sources = [{"contract_id": str(contract.id), "contract_name": contract.name, "snippet": (contract.summary or contract.full_text[:300])}]
 
             prompt = (
-                f"Contract content:\n{context}\n\n"
-                f"{history_text}"
-                f"User: {body.message}\n\nAssistant:"
+                f"You are analysing the following contract:\n\n{context}\n\n"
+                + (f"Conversation so far:\n{history_text}\n" if history_text else "")
+                + f"User question: {body.message}\n\nAnswer:"
             )
             llm = get_llm()
             response = await asyncio.to_thread(llm.invoke, [SystemMessage(content=system), HumanMessage(content=prompt)])
@@ -879,9 +904,9 @@ async def chat_with_contracts(
     context = meta_block + "\n\nRELEVANT EXCERPTS:\n" + chunks_block
 
     prompt = (
-        f"Contract content:\n{context}\n\n"
-        f"{history_text}"
-        f"User: {body.message}\n\nAssistant:"
+        f"You are analysing the following contracts:\n\n{context}\n\n"
+        + (f"Conversation so far:\n{history_text}\n" if history_text else "")
+        + f"User question: {body.message}\n\nAnswer:"
     )
 
     llm = get_llm()

@@ -55,7 +55,7 @@ Return ONLY a valid JSON array of event objects (no extra text, no markdown fenc
   "title": "short descriptive title (max 8 words)",
   "date": "YYYY-MM-DD",
   "type": "start | milestone | deadline | renewal | payment | review | judgment_date | appeal_deadline | trial_date | filing_date | discovery_deadline | deposition | motion_date | vesting_event | lockup_expiry | exercise_date | acquisition_event",
-  "description": "1 sentence description of this event",
+  "description": "2–4 sentence formal legal description written as it would appear in the chronology section of a court petition. Identify the parties involved, state precisely what occurred, cite any relevant approval/authority/obligation, and note the legal or commercial significance. Write in past tense for completed events, present tense for obligations. Do not abbreviate — judges and lawyers must be able to understand the full context from this description alone.",
   "section": "section number or clause heading where this appears, or null",
   "sourceClause": "the exact verbatim clause text (max 200 chars) or null",
   "amount": "currency amount string if applicable (e.g. '$50,000', '100,000 shares'), or null"

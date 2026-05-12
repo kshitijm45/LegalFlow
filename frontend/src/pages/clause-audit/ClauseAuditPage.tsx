@@ -163,11 +163,6 @@ function ClauseRow({
           </span>
         )}
 
-        {/* Mandatory */}
-        {!result.mandatory && (
-          <span className="text-[10.5px] font-medium text-text-3 italic">optional</span>
-        )}
-
         {/* Risk badge */}
         <span
           className="text-[11px] font-semibold px-2 py-0.5 rounded-[5px] flex-shrink-0"
@@ -336,13 +331,6 @@ function ResultsPanel({
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Summary bar */}
       <div className="flex items-center gap-5 px-6 py-3.5 border-b border-border bg-white flex-shrink-0">
-        <div className="flex items-baseline gap-2 flex-shrink-0">
-          <span className="text-[34px] font-bold text-indigo leading-none tracking-tight">
-            {audit.overall_score?.toFixed(0)}%
-          </span>
-          <span className="text-[12px] text-text-3">playbook coverage</span>
-        </div>
-
         <div className="flex-1 min-w-0">
           <p className="text-[11px] text-text-3 mb-1.5">
             {audit.results.filter(r => r.status !== 'missing').length} of {audit.results.length} clauses satisfied
